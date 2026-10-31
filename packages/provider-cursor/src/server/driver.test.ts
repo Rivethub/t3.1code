@@ -60,7 +60,18 @@ const layerTest = TestProviderHost.layer({ runBackgroundWork: false }).pipe(
   Layer.provideMerge(
     Layer.succeed(
       HttpClient.HttpClient,
-      HttpClient.make(() => Effect.die("Disabled Cursor must not make an HTTP request")),
+      HttpClient.make((request) => {
+        if (request.url.includes("GetCurrentPeriodUsage")) {
+          expect(request.headers.authorization).toBe("Bearer instance-browser-key");
+          return Effect.succeed(
+            HttpClientResponse.fromWeb(
+              request,
+              Response.json({ planUsage: { totalPercentUsed: 42 } }),
+            ),
+          );
+        }
+        return Effect.die("Disabled Cursor must not make an HTTP request");
+      }),
     ),
   ),
 );
@@ -152,6 +163,9 @@ it.layer(layerTest)("CursorDriver", (it) => {
             email: "cursor@example.com",
           },
           setup: { canAuthenticate: true, canInstall: false },
+          usageLimits: {
+            windows: [{ id: "totalPercentUsed", usedPercent: 42 }],
+          },
         });
         const threadId = ThreadId.make("cursor-browser-thread");
         const modelSelection = { instanceId: input.instanceId, model: "auto" };
