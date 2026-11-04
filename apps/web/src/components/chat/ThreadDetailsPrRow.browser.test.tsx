@@ -232,6 +232,31 @@ it("requires a new merge click after passing checks become pending and pass agai
   expect(state.perform).not.toHaveBeenCalled();
 });
 
+it("blocks Fix while a queued message is being edited", async () => {
+  await using screen = await setup();
+  state.status = "failure";
+  await act(async () => {
+    await screen.rerender(
+      <ThreadDetailsPrRow
+        environmentId={EnvironmentId.make("environment")}
+        pr={null}
+        number={1}
+        status={null}
+        project={null}
+        label="Test PR"
+        openAriaLabel="Open PR"
+        onOpen={vi.fn()}
+        composerTarget={null}
+      />,
+    );
+  });
+  expect(
+    [...screen.container.querySelectorAll("button")].find(
+      (button) => button.textContent?.trim() === "Fix",
+    )?.disabled,
+  ).toBe(true);
+});
+
 async function setup() {
   state.perform.mockReset();
   state.checkoutError = null;

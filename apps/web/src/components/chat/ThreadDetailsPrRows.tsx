@@ -49,7 +49,7 @@ function ThreadDetailsPrLinkRow({
   onOpen: (event: ReactMouseEvent<HTMLElement>) => void;
   onActed?: (() => void) | undefined;
   onStopWatching?: (() => void) | undefined;
-  composerTarget?: ComposerThreadTarget | undefined;
+  composerTarget?: ComposerThreadTarget | null | undefined;
 }) {
   const projects = useProjects();
   const parsed = sourceControlClients.parseChangeRequestUrl(link.url)?.link;
@@ -169,7 +169,7 @@ export function ThreadDetailsThreadPrRows({
   branchPr?: VcsStatusResult["pr"];
   branchSourceControlProvider?: VcsStatusResult["sourceControlProvider"];
   onActed?: () => void;
-  composerTarget?: ComposerThreadTarget | undefined;
+  composerTarget?: ComposerThreadTarget | null | undefined;
 }) {
   const thread = useQuietThreadShell(threadRef);
   const displayed = useThreadDisplayedPullRequest(

@@ -89,7 +89,7 @@ interface BranchToolbarBranchSelectorProps {
   environmentId: EnvironmentId;
   threadId: ThreadId;
   draftId?: DraftId;
-  composerDraftTarget?: ComposerThreadTarget | undefined;
+  composerDraftTarget?: ComposerThreadTarget | null | undefined;
   envLocked: boolean;
   effectiveEnvModeOverride?: "local" | "worktree";
   activeThreadBranchOverride?: string | null;

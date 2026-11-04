@@ -58,7 +58,7 @@ interface ThreadDetailsPanelProps extends Pick<
   worktreePath: string | null;
   isServerThread: boolean;
   draftId?: DraftId;
-  composerDraftTarget: ComposerThreadTarget;
+  composerDraftTarget: ComposerThreadTarget | null;
   activeProjectName: string | undefined;
   activeProjectScripts: ReadonlyArray<ProjectScript> | undefined;
   preferredScriptId: string | null;
