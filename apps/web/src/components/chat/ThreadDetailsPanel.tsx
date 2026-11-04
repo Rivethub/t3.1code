@@ -118,6 +118,7 @@ export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
     worktreePath: props.worktreePath,
     isServerThread: props.isServerThread,
     ...(props.draftId ? { draftId: props.draftId } : {}),
+    composerDraftTarget: props.composerDraftTarget,
     onEnvModeChange: props.onEnvModeChange,
     startFromOrigin: props.startFromOrigin,
     onStartFromOriginChange: props.onStartFromOriginChange,

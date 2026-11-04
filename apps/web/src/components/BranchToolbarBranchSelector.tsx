@@ -27,7 +27,11 @@ import {
   type Ref,
 } from "react";
 
-import { useComposerDraftStore, type DraftId } from "../composerDraftStore";
+import {
+  useComposerDraftStore,
+  type ComposerThreadTarget,
+  type DraftId,
+} from "../composerDraftStore";
 import { writeTextToClipboard } from "../hooks/useCopyToClipboard";
 import { readLocalApi } from "../localApi";
 import { useOpenPrLink } from "../lib/openPullRequestLink";
@@ -85,6 +89,7 @@ interface BranchToolbarBranchSelectorProps {
   environmentId: EnvironmentId;
   threadId: ThreadId;
   draftId?: DraftId;
+  composerDraftTarget?: ComposerThreadTarget | undefined;
   envLocked: boolean;
   effectiveEnvModeOverride?: "local" | "worktree";
   activeThreadBranchOverride?: string | null;
@@ -109,6 +114,7 @@ export function BranchToolbarBranchSelector({
   environmentId,
   threadId,
   draftId,
+  composerDraftTarget,
   envLocked,
   effectiveEnvModeOverride,
   activeThreadBranchOverride,
@@ -882,6 +888,7 @@ export function BranchToolbarBranchSelector({
             branchPr={branchPr}
             branchSourceControlProvider={branchStatusQuery.data?.sourceControlProvider}
             onActed={() => branchStatusQuery.refresh()}
+            composerTarget={composerDraftTarget}
           />
         ) : null}
       </div>
