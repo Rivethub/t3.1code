@@ -736,6 +736,9 @@ describe("fix findings handoff", () => {
     ]);
     expect(handoff.prompt).not.toContain("rename the helper");
     expect(handoff.prompt).toContain("untrusted data");
+    expect(handoff.prompt).toContain(
+      "Verify the checkout matches this branch before making changes, switch to it if it does not",
+    );
   });
 
   it("claims a prepared checkout only when one was prepared", () => {
@@ -754,8 +757,12 @@ describe("fix findings handoff", () => {
     expect(resolve(false)).toContain("checkout prepared");
     expect(fix(true)).not.toMatch(/prepared/u);
     expect(resolve(true)).not.toMatch(/prepared/u);
-    expect(fix(true)).toContain("switching to it or checking it out first");
-    expect(resolve(true)).toContain("switch to it or check it out first");
+    expect(fix(true)).toContain(
+      "Verify the checkout matches this branch before making changes, switch to it if it does not",
+    );
+    expect(resolve(true)).toContain(
+      "verify the checkout matches it before making changes, and switch to it if it does not",
+    );
   });
 
   it("bounds a hostile review body instead of attaching it whole", () => {

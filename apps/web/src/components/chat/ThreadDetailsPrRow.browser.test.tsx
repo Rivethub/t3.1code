@@ -250,11 +250,12 @@ it("blocks Fix while a queued message is being edited", async () => {
       />,
     );
   });
-  expect(
-    [...screen.container.querySelectorAll("button")].find(
-      (button) => button.textContent?.trim() === "Fix",
-    )?.disabled,
-  ).toBe(true);
+  const blockedFix = [...screen.container.querySelectorAll("button")].find(
+    (button) => button.textContent?.trim() === "Fix",
+  )!;
+  expect(blockedFix.getAttribute("aria-disabled")).toBe("true");
+  await act(async () => blockedFix.click());
+  expect(state.newThread).not.toHaveBeenCalled();
 });
 
 async function setup() {
