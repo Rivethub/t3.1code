@@ -125,7 +125,7 @@ import {
   buildFixFindingsHandoff,
   buildPullRequestCommentContext,
   buildPullRequestContext,
-  buildResolveConflictsPrompt,
+  buildResolveConflictsHandoff,
   latestPullRequestReviewOutcomes,
   loadingPullRequestCheckoutCommand,
   isPullRequestNotFound,
@@ -1225,15 +1225,14 @@ export function PullRequestDetailPanel({
 
   const startResolveConflicts = () => {
     if (!handoffSummary) return;
-    void startHandoff("conflicts", {
-      prompt: buildResolveConflictsPrompt({
-        number: handoffSummary.number,
-        url: handoffSummary.url,
-        headBranch: handoffSummary.headBranch,
-        baseBranch: handoffSummary.baseBranch,
+    void startHandoff(
+      "conflicts",
+      buildResolveConflictsHandoff({
+        ...handoffSummary,
+        isDraft: handoffSummary.isDraft === true,
         inThisThread: attachTarget !== null,
       }),
-    });
+    );
   };
 
   const selectMergeMethod = (method: PullRequestMergeMethod) => {

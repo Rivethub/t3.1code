@@ -35,7 +35,7 @@ import {
 
 import {
   buildFixFindingsHandoff,
-  buildResolveConflictsPrompt,
+  buildResolveConflictsHandoff,
   classifyPullRequestChecks,
   describePullRequestChecks,
   isPullRequestConflicting,
@@ -213,15 +213,19 @@ export function ThreadDetailsPrRow({
 
   const startResolveConflicts = () => {
     if (detail === null) return;
-    handOff("conflicts", {
-      prompt: buildResolveConflictsPrompt({
+    handOff(
+      "conflicts",
+      buildResolveConflictsHandoff({
         number: detail.number,
+        title: detail.title,
         url: detail.url,
         headBranch: detail.headBranch,
         baseBranch: detail.baseBranch,
+        state: detail.state,
+        isDraft: detail.isDraft,
         inThisThread: composerTarget != null,
       }),
-    });
+    );
   };
 
   const startFixChecks = () => {
