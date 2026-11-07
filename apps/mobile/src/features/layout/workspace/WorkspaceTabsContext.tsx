@@ -85,8 +85,8 @@ export function WorkspaceTabsProvider(props: {
   const settingsOpen = props.settingsOpen ?? false;
   const dispatch = (action: WorkspaceTabsAction) =>
     registry.set(model.stored, workspaceTabsReducer(registry.get(model.resolved), action));
-  // Settings search is ephemeral: leaving the tab must not bring a filter back on return.
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- clears settings search when Settings navigation closes
+  // Settings search belongs to the open Settings session; leaving ends it.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- ends settings search when Settings closes
   useEffect(() => {
     if (settingsOpen) return;
     registry.set(
