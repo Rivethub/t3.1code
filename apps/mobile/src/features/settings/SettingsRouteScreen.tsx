@@ -36,6 +36,7 @@ import { usePaneRole } from "../../components/ui/Pane";
 import { I18nProvider, useGT, useLanguagePreference } from "../../i18n/I18nProvider";
 import { nativeLanguageName } from "@t3tools/client-runtime/locales";
 import { SUPPORTED_LOCALES } from "../../i18n/locales";
+import { settingsSearchQuery } from "../layout/workspace/workspace-tabs-state";
 
 export function SettingsRouteScreen() {
   const list = useSettingsListPlacement();
@@ -92,6 +93,8 @@ function TranslatedSettingsListScreen(props: {
   const gt = useGT();
   const workspace = useWorkspaceTabs();
   const environmentMenu = useSettingsEnvironmentMenu();
+  const settings = workspace?.state.tabs.settings;
+  const searching = settings !== undefined && settings.searchMode !== "resting";
   return (
     <SettingsSidebarContext value={props.sidebar ? { selected: props.selected } : null}>
       <View className="flex-1 bg-screen">
@@ -100,12 +103,15 @@ function TranslatedSettingsListScreen(props: {
           workspaceRoot={props.sidebar}
           menus={[environmentMenu]}
           search={
-            workspace
+            workspace && settings
               ? {
-                  value: workspace.state.tabs.settings.query,
+                  value: settings.query,
                   onChangeText: (query) =>
                     workspace.dispatch({ type: "query", tab: "settings", query }),
                   placeholder: gt("Search settings"),
+                  active: searching,
+                  onOpen: () => workspace.dispatch({ type: "search", tab: "settings" }),
+                  onClose: () => workspace.dispatch({ type: "cancel", tab: "settings" }),
                 }
               : undefined
           }
@@ -190,7 +196,8 @@ function SettingsList(props: { readonly connections: readonly SettingsListRow[] 
   // UIKit insets the scroll view by its column's safe area, which this context can report as 0.
   const bottomSafeArea = useNativeColumnLayoutMetrics()?.safeArea.bottom ?? insets.bottom;
   const workspace = useWorkspaceTabs();
-  const query = workspace?.state.tabs.settings.query ?? "";
+  const settings = workspace?.state.tabs.settings;
+  const query = settings ? settingsSearchQuery(settings) : "";
   const overflowRows = useOverflowRows();
   const indexSections = useSettingsIndexSections();
   const sections = filterSettingsSections(
