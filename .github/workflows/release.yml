@@ -448,7 +448,10 @@ jobs:
       # and strip the credential-refresh progress prefix before parsing JSON.
       # Redacted values are persisted as
       # {"__redacted__": "<value>"}; the token is masked before it is written.
+      # Optional: needs Cloudflare Alchemy state. Preview/fork builds skip this
+      # and ship without relay client OTLP until CLOUDFLARE_* is configured.
       - name: Read production relay tracing config
+        if: ${{ env.CLOUDFLARE_API_TOKEN != '' && env.CLOUDFLARE_ACCOUNT_ID != '' }}
         shell: bash
         working-directory: infra/relay
         run: |
@@ -469,6 +472,7 @@ jobs:
           } > "$RUNNER_TEMP/relay-client-tracing.env"
 
       - name: Upload relay client tracing config
+        if: ${{ env.CLOUDFLARE_API_TOKEN != '' && env.CLOUDFLARE_ACCOUNT_ID != '' }}
         uses: actions/upload-artifact@v7
         with:
           name: relay-client-tracing-config
@@ -564,6 +568,7 @@ jobs:
           pnpm_config_cache_dir: ${{ runner.temp }}/pnpm-metadata
 
       - name: Download relay client tracing config
+        continue-on-error: true
         uses: actions/download-artifact@v8
         with:
           name: relay-client-tracing-config
@@ -573,6 +578,10 @@ jobs:
         shell: bash
         run: |
           config_path="$RUNNER_TEMP/relay-client-tracing/relay-client-tracing.env"
+          if [[ ! -f "$config_path" ]]; then
+            echo "No relay client tracing config; continuing without OTLP."
+            exit 0
+          fi
           tracing_token="$(sed -n 's/^T3CODE_RELAY_CLIENT_OTLP_TRACES_TOKEN=//p' "$config_path")"
           echo "::add-mask::$tracing_token"
           cat "$config_path" >> "$GITHUB_ENV"
@@ -657,6 +666,7 @@ jobs:
       clerk_jwt_template: ${{ needs.relay_public_config.outputs.clerk_jwt_template }}
       clerk_cli_oauth_client_id: ${{ needs.relay_public_config.outputs.clerk_cli_oauth_client_id }}
       relay_url: ${{ needs.relay_public_config.outputs.relay_url }}
+      relay_client_tracing: ${{ secrets.CLOUDFLARE_API_TOKEN != '' && vars.CLOUDFLARE_ACCOUNT_ID != '' }}
       label: macOS arm64
       runner: macos-15
       platform: mac
@@ -683,6 +693,7 @@ jobs:
       clerk_jwt_template: ${{ needs.relay_public_config.outputs.clerk_jwt_template }}
       clerk_cli_oauth_client_id: ${{ needs.relay_public_config.outputs.clerk_cli_oauth_client_id }}
       relay_url: ${{ needs.relay_public_config.outputs.relay_url }}
+      relay_client_tracing: ${{ secrets.CLOUDFLARE_API_TOKEN != '' && vars.CLOUDFLARE_ACCOUNT_ID != '' }}
       label: macOS x64
       runner: macos-15
       platform: mac
@@ -709,6 +720,7 @@ jobs:
       clerk_jwt_template: ${{ needs.relay_public_config.outputs.clerk_jwt_template }}
       clerk_cli_oauth_client_id: ${{ needs.relay_public_config.outputs.clerk_cli_oauth_client_id }}
       relay_url: ${{ needs.relay_public_config.outputs.relay_url }}
+      relay_client_tracing: ${{ secrets.CLOUDFLARE_API_TOKEN != '' && vars.CLOUDFLARE_ACCOUNT_ID != '' }}
       label: Linux x64
       runner: ubuntu-24.04
       platform: linux
@@ -735,6 +747,7 @@ jobs:
       clerk_jwt_template: ${{ needs.relay_public_config.outputs.clerk_jwt_template }}
       clerk_cli_oauth_client_id: ${{ needs.relay_public_config.outputs.clerk_cli_oauth_client_id }}
       relay_url: ${{ needs.relay_public_config.outputs.relay_url }}
+      relay_client_tracing: ${{ secrets.CLOUDFLARE_API_TOKEN != '' && vars.CLOUDFLARE_ACCOUNT_ID != '' }}
       label: Linux arm64
       runner: ubuntu-24.04-arm
       platform: linux
@@ -763,6 +776,7 @@ jobs:
       clerk_jwt_template: ${{ needs.relay_public_config.outputs.clerk_jwt_template }}
       clerk_cli_oauth_client_id: ${{ needs.relay_public_config.outputs.clerk_cli_oauth_client_id }}
       relay_url: ${{ needs.relay_public_config.outputs.relay_url }}
+      relay_client_tracing: ${{ secrets.CLOUDFLARE_API_TOKEN != '' && vars.CLOUDFLARE_ACCOUNT_ID != '' }}
       label: Windows x64
       runner: ubuntu-24.04
       verify_runner: windows-2025
@@ -787,6 +801,7 @@ jobs:
       clerk_jwt_template: ${{ needs.relay_public_config.outputs.clerk_jwt_template }}
       clerk_cli_oauth_client_id: ${{ needs.relay_public_config.outputs.clerk_cli_oauth_client_id }}
       relay_url: ${{ needs.relay_public_config.outputs.relay_url }}
+      relay_client_tracing: ${{ secrets.CLOUDFLARE_API_TOKEN != '' && vars.CLOUDFLARE_ACCOUNT_ID != '' }}
       label: Windows arm64
       runner: ubuntu-24.04
       verify_runner: windows-11-arm
@@ -1171,6 +1186,7 @@ jobs:
           install-args: --filter=@t3tools/scripts... --filter=@t3tools/web...
 
       - name: Download relay client tracing config
+        continue-on-error: true
         uses: actions/download-artifact@v8
         with:
           name: relay-client-tracing-config
@@ -1180,6 +1196,10 @@ jobs:
         shell: bash
         run: |
           config_path="$RUNNER_TEMP/relay-client-tracing/relay-client-tracing.env"
+          if [[ ! -f "$config_path" ]]; then
+            echo "No relay client tracing config; continuing without OTLP."
+            exit 0
+          fi
           tracing_token="$(sed -n 's/^T3CODE_RELAY_CLIENT_OTLP_TRACES_TOKEN=//p' "$config_path")"
           echo "::add-mask::$tracing_token"
           cat "$config_path" >> "$GITHUB_ENV"
