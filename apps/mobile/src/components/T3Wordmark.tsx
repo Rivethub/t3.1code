@@ -8,11 +8,14 @@ export function T3Wordmark(props: {
   readonly height: number;
   readonly color?: ColorValue;
   readonly colorClassName?: string;
+  readonly accessibilityLabel?: string;
 }) {
   const aspectRatio = 94.3941 / 56.96;
+  const accessibilityLabel = props.accessibilityLabel ?? "T3.1";
   return (
     <Svg
-      accessibilityLabel="T3"
+      accessible={accessibilityLabel.length > 0}
+      accessibilityLabel={accessibilityLabel.length > 0 ? accessibilityLabel : undefined}
       height={props.height}
       width={props.height * aspectRatio}
       viewBox="15.5309 37 94.3941 56.96"

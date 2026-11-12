@@ -1,4 +1,9 @@
-# T3 Code docs
+# T3.1 Code docs
+
+This tree is Rivethub’s **T3.1 Code** fork of T3 Code: tracked with upstream for prototypes and
+experimental builds, not a hard fork. Product docs below still describe T3 Code behavior; install
+and store links may point at upstream unless this fork publishes its own artifacts. Contribution
+rules for *this* repo are in [CONTRIBUTING.md](../CONTRIBUTING.md).
 
 ## Using T3 Code
 

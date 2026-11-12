@@ -1,4 +1,10 @@
-# T3 Code
+# T3.1 Code
+
+This checkout is **T3.1 Code** (`Rivethub/t3.1code`): an experimental, upstream-tracked line of
+[pingdotgg/t3code](https://github.com/pingdotgg/t3code). Not a hard fork. Prefer changes that stay
+mergeable with upstream; keep branding and trust lists (`.github/VOUCHED.td`,
+`.github/TRIAGE_EXEMPTIONS.td`) fork-local. See [README.md](./README.md) and
+[CONTRIBUTING.md](./CONTRIBUTING.md).
 
 T3 Code is a minimal GUI for coding agents. A Node WebSocket server wraps provider CLIs and agents (Codex, Claude Code, Cursor, Grok, OpenCode, Antigravity, Kiro) and serves web, desktop, and mobile clients.
 
