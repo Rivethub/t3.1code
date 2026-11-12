@@ -26,7 +26,8 @@ full checklist stays in [release.md](./release.md); this page is the fork delta.
 4. Download artifacts from the GitHub prerelease it creates.
 
 Preview reads Clerk/relay public ids from `.env.example` (no `production`
-environment). Nightly/stable use the `production` environment.
+environment) and skips Cloudflare Alchemy tracing when those secrets are
+absent. Nightly/stable use the `production` environment.
 
 ## Need from a human
 
