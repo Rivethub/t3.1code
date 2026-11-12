@@ -69,8 +69,10 @@ If you need the old personal fork for a one-off: `git push -u fork HEAD`.
 
 Upstream CI uses Blacksmith runners. This fork runs the same workflows on GitHub-hosted
 runners (`ubuntu-24.04`, `macos-15`, `windows-2025`). When syncing upstream workflow files,
-keep the GitHub-hosted `runs-on` labels. Upstream-only jobs (release publish, EAS production,
-relay deploy) stay gated to `pingdotgg/t3code` and are skipped here.
+keep the GitHub-hosted `runs-on` labels.
+
+Release and mobile workflows also run here. AUR stays upstream-only; npm publish stays off
+until `ENABLE_NPM_PUBLISH` is set. See [docs/operations/t31-builds.md](docs/operations/t31-builds.md).
 
 ## Syncing from upstream
 

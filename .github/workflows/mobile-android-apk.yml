@@ -15,7 +15,7 @@ concurrency:
 jobs:
   mirror:
     name: Mirror beta APK
-    if: github.repository == 'pingdotgg/t3code'
+    if: contains(fromJSON('["pingdotgg/t3code","Rivethub/t3.1code"]'), github.repository)
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:

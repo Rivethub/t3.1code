@@ -52,7 +52,9 @@ jobs:
   # job needs this one, so a skip here skips the whole run.
   resolve_commit:
     name: Resolve release commit
-    if: github.repository == 'pingdotgg/t3code' && (github.event_name != 'schedule' || vars.PAUSE_NIGHTLY != 'true')
+    # Rivethub/t3.1code is the experimental release train. Scheduled nightlies
+    # still honor PAUSE_NIGHTLY (set true on the fork until signing is ready).
+    if: contains(fromJSON('["pingdotgg/t3code","Rivethub/t3.1code"]'), github.repository) && (github.event_name != 'schedule' || vars.PAUSE_NIGHTLY != 'true')
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     outputs:
@@ -600,7 +602,7 @@ jobs:
       # other repositories report "dev" telemetry.
       - name: Build JS bundle
         env:
-          T3CODE_TELEMETRY_CHANNEL: ${{ github.repository == 'pingdotgg/t3code' && needs.preflight.outputs.release_channel || 'dev' }}
+          T3CODE_TELEMETRY_CHANNEL: ${{ contains(fromJSON('["pingdotgg/t3code","Rivethub/t3.1code"]'), github.repository) && needs.preflight.outputs.release_channel || 'dev' }}
         run: vp run ${{ steps.bundle_build.outputs.script }}
 
       # Two paths under apps/ so the artifact root is apps/; consumers download
@@ -1053,7 +1055,9 @@ jobs:
   publish_cli:
     name: Publish CLI to npm
     needs: [preflight, build_bundle, release]
-    if: ${{ !failure() && !cancelled() && needs.preflight.result == 'success' && needs.release.result == 'success' }}
+    # Fork trains keep GitHub Release artifacts without owning the `t3` npm
+    # package. Set ENABLE_NPM_PUBLISH=true once a trusted publisher exists here.
+    if: ${{ !failure() && !cancelled() && needs.preflight.result == 'success' && needs.release.result == 'success' && (github.repository == 'pingdotgg/t3code' || vars.ENABLE_NPM_PUBLISH == 'true') }}
     runs-on: ubuntu-24.04 # ubuntu-24.04
     timeout-minutes: 15
     permissions:

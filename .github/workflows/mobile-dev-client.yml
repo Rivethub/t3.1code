@@ -60,7 +60,7 @@ permissions:
 jobs:
   android:
     name: Android ${{ matrix.abi }}
-    if: github.repository == 'pingdotgg/t3code' && (github.event_name != 'workflow_dispatch' || inputs.platform == 'android')
+    if: contains(fromJSON('["pingdotgg/t3code","Rivethub/t3.1code"]'), github.repository) && (github.event_name != 'workflow_dispatch' || inputs.platform == 'android')
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     strategy:
@@ -218,7 +218,7 @@ jobs:
 
   ios:
     name: iOS simulator
-    if: github.repository == 'pingdotgg/t3code' && (github.event_name != 'workflow_dispatch' || inputs.platform == 'ios')
+    if: contains(fromJSON('["pingdotgg/t3code","Rivethub/t3.1code"]'), github.repository) && (github.event_name != 'workflow_dispatch' || inputs.platform == 'ios')
     runs-on: macos-15
     timeout-minutes: 60
     concurrency:

@@ -74,7 +74,7 @@ on:
 jobs:
   production:
     name: EAS ${{ inputs.profile || 'production' }} ${{ github.event_name == 'push' && 'auto' || inputs.mode }}
-    if: github.repository == 'pingdotgg/t3code'
+    if: contains(fromJSON('["pingdotgg/t3code","Rivethub/t3.1code"]'), github.repository)
     runs-on: ubuntu-24.04
     # Serialize runs so OTAs publish in merge order. GitHub keeps at most one
     # queued job per group, so a burst of merges collapses into one run of the
