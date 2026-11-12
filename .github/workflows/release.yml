@@ -419,6 +419,7 @@ jobs:
       clerk_jwt_template: ${{ steps.public_config.outputs.clerk_jwt_template }}
       clerk_cli_oauth_client_id: ${{ steps.public_config.outputs.clerk_cli_oauth_client_id }}
       relay_url: ${{ steps.public_config.outputs.relay_url }}
+      has_tracing: ${{ steps.tracing_flag.outputs.has_tracing }}
     env:
       CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
@@ -521,6 +522,15 @@ jobs:
           echo "clerk_jwt_template=$CLERK_JWT_TEMPLATE" >> "$GITHUB_OUTPUT"
           echo "clerk_cli_oauth_client_id=$CLERK_CLI_OAUTH_CLIENT_ID" >> "$GITHUB_OUTPUT"
           echo "relay_url=https://$relay_domain" >> "$GITHUB_OUTPUT"
+
+      - id: tracing_flag
+        name: Record whether tracing config was uploaded
+        run: |
+          if [[ -f "$RUNNER_TEMP/relay-client-tracing.env" ]]; then
+            echo "has_tracing=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "has_tracing=false" >> "$GITHUB_OUTPUT"
+          fi
 
   # The platform-independent JS (server bundle, web client, Electron main) is
   # built exactly once here and handed to every platform job as `js-bundle`.
@@ -666,7 +676,7 @@ jobs:
       clerk_jwt_template: ${{ needs.relay_public_config.outputs.clerk_jwt_template }}
       clerk_cli_oauth_client_id: ${{ needs.relay_public_config.outputs.clerk_cli_oauth_client_id }}
       relay_url: ${{ needs.relay_public_config.outputs.relay_url }}
-      relay_client_tracing: ${{ secrets.CLOUDFLARE_API_TOKEN != '' && vars.CLOUDFLARE_ACCOUNT_ID != '' }}
+      relay_client_tracing: ${{ needs.relay_public_config.outputs.has_tracing == 'true' }}
       label: macOS arm64
       runner: macos-15
       platform: mac
@@ -693,7 +703,7 @@ jobs:
       clerk_jwt_template: ${{ needs.relay_public_config.outputs.clerk_jwt_template }}
       clerk_cli_oauth_client_id: ${{ needs.relay_public_config.outputs.clerk_cli_oauth_client_id }}
       relay_url: ${{ needs.relay_public_config.outputs.relay_url }}
-      relay_client_tracing: ${{ secrets.CLOUDFLARE_API_TOKEN != '' && vars.CLOUDFLARE_ACCOUNT_ID != '' }}
+      relay_client_tracing: ${{ needs.relay_public_config.outputs.has_tracing == 'true' }}
       label: macOS x64
       runner: macos-15
       platform: mac
@@ -720,7 +730,7 @@ jobs:
       clerk_jwt_template: ${{ needs.relay_public_config.outputs.clerk_jwt_template }}
       clerk_cli_oauth_client_id: ${{ needs.relay_public_config.outputs.clerk_cli_oauth_client_id }}
       relay_url: ${{ needs.relay_public_config.outputs.relay_url }}
-      relay_client_tracing: ${{ secrets.CLOUDFLARE_API_TOKEN != '' && vars.CLOUDFLARE_ACCOUNT_ID != '' }}
+      relay_client_tracing: ${{ needs.relay_public_config.outputs.has_tracing == 'true' }}
       label: Linux x64
       runner: ubuntu-24.04
       platform: linux
@@ -747,7 +757,7 @@ jobs:
       clerk_jwt_template: ${{ needs.relay_public_config.outputs.clerk_jwt_template }}
       clerk_cli_oauth_client_id: ${{ needs.relay_public_config.outputs.clerk_cli_oauth_client_id }}
       relay_url: ${{ needs.relay_public_config.outputs.relay_url }}
-      relay_client_tracing: ${{ secrets.CLOUDFLARE_API_TOKEN != '' && vars.CLOUDFLARE_ACCOUNT_ID != '' }}
+      relay_client_tracing: ${{ needs.relay_public_config.outputs.has_tracing == 'true' }}
       label: Linux arm64
       runner: ubuntu-24.04-arm
       platform: linux
@@ -776,7 +786,7 @@ jobs:
       clerk_jwt_template: ${{ needs.relay_public_config.outputs.clerk_jwt_template }}
       clerk_cli_oauth_client_id: ${{ needs.relay_public_config.outputs.clerk_cli_oauth_client_id }}
       relay_url: ${{ needs.relay_public_config.outputs.relay_url }}
-      relay_client_tracing: ${{ secrets.CLOUDFLARE_API_TOKEN != '' && vars.CLOUDFLARE_ACCOUNT_ID != '' }}
+      relay_client_tracing: ${{ needs.relay_public_config.outputs.has_tracing == 'true' }}
       label: Windows x64
       runner: ubuntu-24.04
       verify_runner: windows-2025
@@ -801,7 +811,7 @@ jobs:
       clerk_jwt_template: ${{ needs.relay_public_config.outputs.clerk_jwt_template }}
       clerk_cli_oauth_client_id: ${{ needs.relay_public_config.outputs.clerk_cli_oauth_client_id }}
       relay_url: ${{ needs.relay_public_config.outputs.relay_url }}
-      relay_client_tracing: ${{ secrets.CLOUDFLARE_API_TOKEN != '' && vars.CLOUDFLARE_ACCOUNT_ID != '' }}
+      relay_client_tracing: ${{ needs.relay_public_config.outputs.has_tracing == 'true' }}
       label: Windows arm64
       runner: ubuntu-24.04
       verify_runner: windows-11-arm
