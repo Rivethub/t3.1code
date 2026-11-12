@@ -92,7 +92,7 @@ jobs:
       # channel. The Linux browser secret helper is not part of a macOS app.
       - name: Build JS bundle
         env:
-          T3CODE_TELEMETRY_CHANNEL: ${{ contains(fromJSON('["pingdotgg/t3code","Rivethub/t3.1code"]'), github.repository) && 'preview' || 'dev' }}
+          T3CODE_TELEMETRY_CHANNEL: ${{ (github.repository == 'pingdotgg/t3code' || github.repository == 'Rivethub/t3.1code') && 'preview' || 'dev' }}
         run: vp run ${{ steps.bundle_build.outputs.script }}
 
       # Same layout as release.yml's js-bundle so release-desktop.yml can

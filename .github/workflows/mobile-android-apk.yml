@@ -15,7 +15,9 @@ concurrency:
 jobs:
   mirror:
     name: Mirror beta APK
-    if: contains(fromJSON('["pingdotgg/t3code","Rivethub/t3.1code"]'), github.repository)
+    if: >
+      github.repository == 'pingdotgg/t3code' ||
+      (github.repository == 'Rivethub/t3.1code' && github.event_name == 'workflow_dispatch')
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:

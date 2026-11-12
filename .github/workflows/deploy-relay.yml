@@ -26,7 +26,12 @@ jobs:
   deploy_relay:
     name: Deploy production relay
     # A manual run from another branch would deploy that branch to production.
-    if: contains(fromJSON('["pingdotgg/t3code","Rivethub/t3.1code"]'), github.repository) && github.ref == 'refs/heads/main'
+    # Rivethub opts in with ENABLE_RELAY_DEPLOY=true once Cloudflare/Clerk secrets exist.
+    if: >
+      github.ref == 'refs/heads/main' && (
+        github.repository == 'pingdotgg/t3code' ||
+        (github.repository == 'Rivethub/t3.1code' && vars.ENABLE_RELAY_DEPLOY == 'true')
+      )
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     environment:

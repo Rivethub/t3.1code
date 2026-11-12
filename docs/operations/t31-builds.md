@@ -11,6 +11,8 @@ full checklist stays in [release.md](./release.md); this page is the fork delta.
 - `production` environment with `main` + `v*` deployment branch policies
 - npm publish skipped here unless `ENABLE_NPM_PUBLISH=true` (upstream owns `t3`)
 - AUR publish stays upstream-only
+- Relay deploy and auto mobile/EAS jobs stay off until you set
+  `ENABLE_RELAY_DEPLOY` / run them via `workflow_dispatch`
 
 ## First real desktop cut (unsigned is fine)
 

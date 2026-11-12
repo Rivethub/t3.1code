@@ -74,7 +74,10 @@ on:
 jobs:
   production:
     name: EAS ${{ inputs.profile || 'production' }} ${{ github.event_name == 'push' && 'auto' || inputs.mode }}
-    if: contains(fromJSON('["pingdotgg/t3code","Rivethub/t3.1code"]'), github.repository)
+    # Rivethub: workflow_dispatch only until EXPO_PRODUCTION_TOKEN and a fork EAS project exist.
+    if: >
+      github.repository == 'pingdotgg/t3code' ||
+      (github.repository == 'Rivethub/t3.1code' && github.event_name == 'workflow_dispatch')
     runs-on: ubuntu-24.04
     # Serialize runs so OTAs publish in merge order. GitHub keeps at most one
     # queued job per group, so a burst of merges collapses into one run of the
