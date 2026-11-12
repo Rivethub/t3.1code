@@ -42,8 +42,57 @@ Do not assume that a PR accepted here will be accepted there, or the reverse.
 
 See the [development runbook](docs/operations/development.md#first-checkout).
 
-## Syncing with upstream
+## Git remotes (Rivethub default)
 
-Treat `pingdotgg/t3code` as upstream. Merge or rebase regularly. Prefer small, reviewable
-divergences. Branding and trust-list files in this fork are expected to differ; almost
-everything else should stay easy to merge.
+Day-to-day work pushes to this fork. Remotes are named:
+
+| Remote     | Repo                         | Role                                      |
+| ---------- | ---------------------------- | ----------------------------------------- |
+| `origin`   | `Rivethub/t3.1code`          | Default fetch/push (`remote.pushdefault`) |
+| `upstream` | `pingdotgg/t3code`           | Track and pull from T3 Code               |
+| `fork`     | `wSedlacek/t3code` (optional)| Personal GitHub fork, if you still use it |
+
+```bash
+git remote -v
+# origin    -> git@github.com:Rivethub/t3.1code.git
+# upstream  -> git@github.com:pingdotgg/t3code.git
+
+git fetch origin
+git fetch upstream
+git push                 # goes to Rivethub (origin)
+gh pr create             # defaults to Rivethub/t3.1code
+```
+
+If you need the old personal fork for a one-off: `git push -u fork HEAD`.
+
+## Syncing from upstream
+
+Bring `pingdotgg/t3code` into this fork regularly. Prefer a merge commit on a branch, then PR
+into `origin/main`, so branding and trust-list conflicts stay visible.
+
+```bash
+git fetch upstream
+git checkout -b sync/upstream-$(date +%Y%m%d) origin/main
+git merge upstream/main
+# resolve conflicts; keep fork-local README/CONTRIBUTING/VOUCHED/TRIAGE/branding
+git push -u origin HEAD
+gh pr create --base main --title "chore: sync upstream" --body "Merge latest pingdotgg/t3code into T3.1 Code."
+```
+
+Branding and trust-list files in this fork are expected to differ; almost everything else should
+stay easy to merge.
+
+## Backporting to upstream
+
+Ship the fix here first when you want room to experiment. When it is ready for T3 Code:
+
+```bash
+git fetch upstream
+git checkout -b backport/<short-name> upstream/main
+git cherry-pick -x <sha>   # or repeat for a small stack
+git push -u origin HEAD
+gh pr create --repo pingdotgg/t3code --head Rivethub:<branch> --base main
+```
+
+Omit fork-only files (VOUCHED, TRIAGE, T3.1 branding/docs) from the backport. If cherry-pick
+conflicts only there, drop those hunks and keep the behavioral change.
