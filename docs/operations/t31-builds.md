@@ -18,10 +18,12 @@ full checklist stays in [release.md](./release.md); this page is the fork delta.
 
 1. Fill the secrets/vars listed under “Need from a human” below that you care
    about. Preview needs almost none.
-2. From Actions → **Release** → Run workflow:
+2. Prefer an idle Actions queue (a full CI run can saturate free concurrent
+   jobs and leave Release sitting at `queued` with zero jobs).
+3. From Actions → **Release** → Run workflow:
    - channel: `preview`
    - branch: `main`
-3. Download artifacts from the GitHub prerelease it creates.
+4. Download artifacts from the GitHub prerelease it creates.
 
 Preview reads Clerk/relay public ids from `.env.example` (no `production`
 environment). Nightly/stable use the `production` environment.

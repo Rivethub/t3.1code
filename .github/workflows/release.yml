@@ -32,9 +32,9 @@ on:
 # newest-wins single slot, so a queued stable tag can never be silently
 # dropped. Automatic nightlies recheck the release gap after leaving the queue.
 concurrency:
-  group: release-${{ (github.event_name == 'schedule' || inputs.channel == 'nightly' || inputs.channel == 'preview') && 'nightly' || 'stable' }}
+  # Include repository so Rivethub trains do not share a stuck upstream/fork queue slot.
+  group: release-${{ github.repository }}-${{ (github.event_name == 'schedule' || inputs.channel == 'nightly' || inputs.channel == 'preview') && 'nightly' || 'stable' }}
   cancel-in-progress: false
-  queue: max
 
 permissions:
   # The Windows desktop jobs read this run's artifact list to wait for the
