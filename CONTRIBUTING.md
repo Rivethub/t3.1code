@@ -46,11 +46,11 @@ See the [development runbook](docs/operations/development.md#first-checkout).
 
 Day-to-day work pushes to this fork. Remotes are named:
 
-| Remote     | Repo                         | Role                                      |
-| ---------- | ---------------------------- | ----------------------------------------- |
-| `origin`   | `Rivethub/t3.1code`          | Default fetch/push (`remote.pushdefault`) |
-| `upstream` | `pingdotgg/t3code`           | Track and pull from T3 Code               |
-| `fork`     | `wSedlacek/t3code` (optional)| Personal GitHub fork, if you still use it |
+| Remote     | Repo                          | Role                                      |
+| ---------- | ----------------------------- | ----------------------------------------- |
+| `origin`   | `Rivethub/t3.1code`           | Default fetch/push (`remote.pushdefault`) |
+| `upstream` | `pingdotgg/t3code`            | Track and pull from T3 Code               |
+| `fork`     | `wSedlacek/t3code` (optional) | Personal GitHub fork, if you still use it |
 
 ```bash
 git remote -v
