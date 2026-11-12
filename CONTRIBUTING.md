@@ -65,6 +65,13 @@ gh pr create             # defaults to Rivethub/t3.1code
 
 If you need the old personal fork for a one-off: `git push -u fork HEAD`.
 
+## CI on this fork
+
+Upstream CI uses Blacksmith runners. This fork runs the same workflows on GitHub-hosted
+runners (`ubuntu-24.04`, `macos-15`, `windows-2025`). When syncing upstream workflow files,
+keep the GitHub-hosted `runs-on` labels. Upstream-only jobs (release publish, EAS production,
+relay deploy) stay gated to `pingdotgg/t3code` and are skipped here.
+
 ## Syncing from upstream
 
 Bring `pingdotgg/t3code` into this fork regularly. Prefer a merge commit on a branch, then PR
