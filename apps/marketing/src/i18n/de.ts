@@ -45,6 +45,18 @@ export const de: Messages = {
       "Modell mitten im Thread wechseln.",
       "Jede Woche neue Agents.",
     ],
+    demoEyebrow: "Inszenierte Demo",
+    demoTitle: "Eine Anfrage. Specialists, Thread Details, Review am Handy.",
+    demoBody:
+      "Spiele eine kurze GUI-Reise: ein Lead-Thread gibt Specialists Worktrees, Work erscheint in Thread Details, eine Pending Request wartet, und du schliesst den Review vom Handy ab. Nur illustriert.",
+    demoLabel: "Illustrierte Geschichte. Hier laufen keine Agents.",
+    demoPlay: "Abspielen",
+    demoReplay: "Nochmal",
+    demoPlaying: "Inszenierte Geschichte laeuft...",
+    demoComplete: "Ende der inszenierten Geschichte",
+    demoWindowTitle: "checkout-flake · lead",
+    demoVisualLabel:
+      "Inszenierte Illustration einer T3-Code-GUI-Reise: Delegation Cards, Work in Thread Details, Pending Approval und Phone Review.",
     gitVisualLabel:
       "Illustration des Git-Workflows in T3 Code: Diff prüfen, Änderungen committen und pushen, Pull Request öffnen.",
     prReady: "Bereit",

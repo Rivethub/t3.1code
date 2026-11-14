@@ -47,6 +47,18 @@ export const ja: Messages = {
       "スレッドの途中でモデルを切り替え。",
       "対応エージェントは毎週追加。",
     ],
+    demoEyebrow: "ステージデモ",
+    demoTitle: "ひとつの依頼。スペシャリスト、Thread Details、スマホでの確認。",
+    demoBody:
+      "短い GUI の旅を再生: リードのスレッドがスペシャリストを worktree に委譲し、Work が Thread Details に現れ、保留リクエストが待ち、スマホからレビューを終えます。イラストのみ。",
+    demoLabel: "イラストの物語。このページではエージェントは動きません。",
+    demoPlay: "再生",
+    demoReplay: "もう一度",
+    demoPlaying: "ステージデモを再生中...",
+    demoComplete: "ステージデモの終わり",
+    demoWindowTitle: "checkout-flake · lead",
+    demoVisualLabel:
+      "T3 Code の GUI ジャーニーのステージドイラスト: 委譲カード、Thread Details の Work、保留承認、スマホでのレビュー。",
     gitVisualLabel:
       "T3 Code の Git ワークフローの図：diff を確認し、変更をコミットしてプッシュし、プルリクエストを作成する。",
     prReady: "準備完了",

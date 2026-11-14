@@ -46,6 +46,18 @@ export const ptBR: Messages = {
       "Troque de modelo no meio da thread.",
       "Novos agentes toda semana.",
     ],
+    demoEyebrow: "Demo encenada",
+    demoTitle: "Um pedido. Especialistas, Thread Details e revisão no telefone.",
+    demoBody:
+      "Reproduza um percurso curto da GUI: uma thread principal delega especialistas em worktrees, o trabalho aparece em Thread Details, um pedido pendente espera e você termina a revisão pelo telefone. Só ilustrado.",
+    demoLabel: "História ilustrada. Nenhum agente roda nesta página.",
+    demoPlay: "Reproduzir",
+    demoReplay: "Repetir",
+    demoPlaying: "Reproduzindo história encenada...",
+    demoComplete: "Fim da história encenada",
+    demoWindowTitle: "checkout-flake · lead",
+    demoVisualLabel:
+      "Ilustração encenada de um percurso GUI do T3 Code: cartões de delegação, trabalho em Thread Details, aprovação pendente e revisão no telefone.",
     gitVisualLabel:
       "Ilustração do fluxo de Git no T3 Code: revisar um diff, fazer commit e push das alterações e abrir um pull request.",
     prReady: "Pronto",

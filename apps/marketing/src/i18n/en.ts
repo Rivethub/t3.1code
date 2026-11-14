@@ -45,6 +45,18 @@ export const en = {
       "Switch models mid-thread.",
       "More harnesses shipping weekly.",
     ],
+    demoEyebrow: "Staged demo",
+    demoTitle: "One ask. Specialists, Thread Details, phone review.",
+    demoBody:
+      "Play a short GUI journey: a lead thread delegates specialists into worktrees, Work shows up in Thread Details, a pending request waits, and you finish the review from your phone. Illustrated only.",
+    demoLabel: "Illustrated story. No agents run on this page.",
+    demoPlay: "Play",
+    demoReplay: "Replay",
+    demoPlaying: "Playing staged story...",
+    demoComplete: "End of staged story",
+    demoWindowTitle: "checkout-flake · lead",
+    demoVisualLabel:
+      "Staged illustration of a T3 Code GUI journey: delegation cards, Thread Details work, a pending approval, and phone review.",
     gitVisualLabel:
       "Illustration of the T3 Code Git workflow: review a diff, commit and push changes, and open a pull request.",
     prReady: "Ready",

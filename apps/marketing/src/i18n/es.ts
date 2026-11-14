@@ -46,6 +46,18 @@ export const es: Messages = {
       "Cambia de modelo a mitad del hilo.",
       "Nuevas integraciones cada semana.",
     ],
+    demoEyebrow: "Demo escenificada",
+    demoTitle: "Una petición. Especialistas, Thread Details y revisión en el teléfono.",
+    demoBody:
+      "Reproduce un recorrido corto de la GUI: un hilo principal delega especialistas en worktrees, el trabajo aparece en Thread Details, una solicitud pendiente espera y terminas la revisión desde el teléfono. Solo ilustrado.",
+    demoLabel: "Historia ilustrada. No hay agentes en esta página.",
+    demoPlay: "Reproducir",
+    demoReplay: "Repetir",
+    demoPlaying: "Reproduciendo historia escenificada...",
+    demoComplete: "Fin de la historia escenificada",
+    demoWindowTitle: "checkout-flake · lead",
+    demoVisualLabel:
+      "Ilustración escenificada de un recorrido GUI de T3 Code: tarjetas de delegación, trabajo en Thread Details, una aprobación pendiente y revisión en el teléfono.",
     gitVisualLabel:
       "Ilustración del flujo de Git en T3 Code: revisar un diff, hacer commit y push de los cambios y abrir un pull request.",
     prReady: "Listo",
