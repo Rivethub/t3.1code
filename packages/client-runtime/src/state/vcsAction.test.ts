@@ -38,13 +38,18 @@ import {
   createVcsActionManager,
   createVcsActionTransportId,
   EMPTY_VCS_ACTION_STATE,
+  isThreadStackedActionRunning,
   normalizeVcsActionProgressEvent,
   parseVcsActionTargetKey,
+  resolveSourceControlThreadStatus,
+  threadIdsLinkedToPullRequest,
+  vcsStackedActionThreadKey,
   VcsActionMissingTerminalEventError,
   VcsActionRemoteFailureError,
   VcsActionTargetKeyParseError,
 } from "./vcsAction.ts";
 import { vcsRefsCacheStateAtom } from "./vcsRefInvalidation.ts";
+import * as Deferred from "effect/Deferred";
 
 const actionId = "action-123";
 const action = "commit_push" as const;
@@ -531,6 +536,7 @@ describe("vcsActionState", () => {
 
       expect(AsyncResult.isSuccess(successfulResult)).toBe(true);
       expect(registry.get(manager.stateAtom(targetKey))).toEqual(EMPTY_VCS_ACTION_STATE);
+      expect(registry.get(manager.stackedActionThreadsAtom).size).toBe(0);
       expect(registry.get(state).revision).toBe(1);
       expect(removed).toEqual([`${environmentId}:*`]);
       expect(rpcInputs).toEqual([
@@ -541,6 +547,7 @@ describe("vcsActionState", () => {
         manager.runStackedAction(targetKey).run(registry, {
           actionId: failedActionId,
           action,
+          threadId,
         }),
       );
 
@@ -551,6 +558,7 @@ describe("vcsActionState", () => {
         actionId: failedActionId,
         error: "Source control action 'commit_push' failed during push.",
       });
+      expect(registry.get(manager.stackedActionThreadsAtom).size).toBe(0);
       expect(registry.get(state).revision).toBe(2);
       expect(removed).toEqual([`${environmentId}:*`, `${environmentId}:*`]);
 
@@ -570,6 +578,224 @@ describe("vcsActionState", () => {
       expect(removed).toEqual([`${environmentId}:*`, `${environmentId}:*`, `${environmentId}:*`]);
     }),
   );
+
+  it.effect("keeps the thread marked for the Working section while a stacked action runs", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const connectionState: SupervisorConnectionState = {
+          ...AVAILABLE_CONNECTION_STATE,
+          desired: true,
+          network: "online",
+          phase: "connected",
+          attempt: 1,
+          generation: 1,
+        };
+        const targetKey = { environmentId, cwd };
+        const runningActionId = "working-shelf-running";
+        const entered = yield* Deferred.make<void>();
+        const afterPhase = yield* Deferred.make<void>();
+        const release = yield* Deferred.make<void>();
+        const client = {
+          [WS_METHODS.gitRunStackedAction]: (input: GitRunStackedActionInput) =>
+            Stream.unwrap(
+              Effect.gen(function* () {
+                yield* Deferred.succeed(entered, undefined);
+                yield* Deferred.await(release);
+                return Stream.concat(
+                  Stream.make(
+                    progress({
+                      kind: "phase_started",
+                      actionId: input.actionId,
+                      cwd,
+                      action,
+                      phase: "push",
+                      label: "Pushing",
+                    }),
+                  ),
+                  Stream.fromEffect(Deferred.await(afterPhase)).pipe(
+                    Stream.flatMap(() =>
+                      Stream.make(
+                        progress({
+                          kind: "action_finished",
+                          actionId: input.actionId,
+                          cwd,
+                          action,
+                          result,
+                        }),
+                      ),
+                    ),
+                  ),
+                );
+              }),
+            ),
+        } as unknown as WsRpcProtocolClient;
+        const supervisor = EnvironmentSupervisor.EnvironmentSupervisor.of({
+          target,
+          state: yield* SubscriptionRef.make(connectionState),
+          session: yield* SubscriptionRef.make(Option.some(session(client))),
+          prepared: yield* SubscriptionRef.make(Option.none<PreparedConnection>()),
+          connect: Effect.void,
+          disconnect: Effect.void,
+          retryNow: Effect.void,
+        } satisfies EnvironmentSupervisor.EnvironmentSupervisor["Service"]);
+        const run: EnvironmentRegistry.EnvironmentRegistry["Service"]["run"] = (
+          _environmentId,
+          effect,
+        ) => Effect.provideService(effect, EnvironmentSupervisor.EnvironmentSupervisor, supervisor);
+        const runStream: EnvironmentRegistry.EnvironmentRegistry["Service"]["runStream"] = (
+          _environmentId,
+          stream,
+        ) => Stream.provideService(stream, EnvironmentSupervisor.EnvironmentSupervisor, supervisor);
+        const environmentRegistry = EnvironmentRegistry.EnvironmentRegistry.of({
+          run,
+          runStream,
+        } as unknown as EnvironmentRegistry.EnvironmentRegistry["Service"]);
+        const runtime = Atom.runtime(
+          Layer.merge(
+            Layer.succeed(EnvironmentRegistry.EnvironmentRegistry, environmentRegistry),
+            Layer.succeed(
+              Persistence.EnvironmentCacheStore,
+              cacheStore(() => undefined),
+            ),
+          ),
+        );
+        const manager = createVcsActionManager(runtime);
+        const registry = yield* Effect.acquireRelease(Effect.sync(AtomRegistry.make), (registry) =>
+          Effect.sync(() => registry.dispose()),
+        );
+        const threadId = ThreadId.make("thread-working-shelf");
+        let resolvePhaseSeen!: () => void;
+        const phaseSeen = new Promise<void>((resolve) => {
+          resolvePhaseSeen = resolve;
+        });
+        const running = manager.runStackedAction(targetKey).run(registry, {
+          actionId: runningActionId,
+          action,
+          threadId,
+          onProgress: (event) => {
+            if (event.kind === "phase_started" && event.phase === "push") {
+              resolvePhaseSeen();
+            }
+          },
+        });
+
+        yield* Deferred.await(entered);
+        expect(registry.get(manager.stateAtom(targetKey))).toMatchObject({
+          isRunning: true,
+          threadId,
+          actionId: runningActionId,
+        });
+        const busy = registry.get(manager.stackedActionThreadsAtom);
+        const presence = busy.get(vcsStackedActionThreadKey(environmentId, threadId));
+        expect(presence).toMatchObject({
+          actionId: runningActionId,
+          threadId,
+          action,
+          phase: null,
+        });
+        expect(isThreadStackedActionRunning({ environmentId, id: threadId }, busy)).toBe(true);
+        expect(resolveSourceControlThreadStatus(presence)).toBe("committing");
+
+        yield* Deferred.succeed(release, undefined);
+        yield* Effect.promise(() => phaseSeen);
+        const mid = registry
+          .get(manager.stackedActionThreadsAtom)
+          .get(vcsStackedActionThreadKey(environmentId, threadId));
+        expect(mid?.phase).toBe("push");
+        expect(resolveSourceControlThreadStatus(mid)).toBe("pushing");
+
+        yield* Deferred.succeed(afterPhase, undefined);
+        const finished = yield* Effect.promise(() => running);
+        expect(AsyncResult.isSuccess(finished)).toBe(true);
+        expect(registry.get(manager.stackedActionThreadsAtom).size).toBe(0);
+      }),
+    ),
+  );
+});
+
+describe("resolveSourceControlThreadStatus", () => {
+  const base = {
+    environmentId,
+    threadId: ThreadId.make("thread-status"),
+    actionId: "action-status",
+    startedAtMs: 1,
+  };
+
+  it("maps phase first, then stacked action kind", () => {
+    expect(
+      resolveSourceControlThreadStatus({ ...base, action: "commit_push_pr", phase: "push" }),
+    ).toBe("pushing");
+    expect(
+      resolveSourceControlThreadStatus({ ...base, action: "commit_push_pr", phase: "pr" }),
+    ).toBe("submitting");
+    expect(
+      resolveSourceControlThreadStatus({ ...base, action: "commit_push_pr", phase: "commit" }),
+    ).toBe("committing");
+    expect(
+      resolveSourceControlThreadStatus({ ...base, action: "commit_push_pr", phase: null }),
+    ).toBe("committing");
+    expect(resolveSourceControlThreadStatus({ ...base, action: "push", phase: null })).toBe(
+      "pushing",
+    );
+    expect(resolveSourceControlThreadStatus({ ...base, action: "create_pr", phase: null })).toBe(
+      "submitting",
+    );
+    expect(resolveSourceControlThreadStatus({ ...base, action: "merge", phase: null })).toBe(
+      "merging",
+    );
+    expect(resolveSourceControlThreadStatus(null)).toBeNull();
+  });
+});
+
+describe("threadIdsLinkedToPullRequest", () => {
+  it("returns threads whose linked PRs match host, repository, and number", () => {
+    const threadA = ThreadId.make("thread-a");
+    const threadB = ThreadId.make("thread-b");
+    const threadC = ThreadId.make("thread-c");
+    expect(
+      threadIdsLinkedToPullRequest(
+        [
+          {
+            environmentId,
+            id: threadA,
+            pullRequests: [{ repository: "owner/repo", number: 7, host: "github.com" }],
+          },
+          {
+            environmentId,
+            id: threadB,
+            pullRequests: [{ repository: "owner/repo", number: 8 }],
+          },
+          {
+            environmentId,
+            id: ThreadId.make("thread-d"),
+            pullRequests: [],
+            branchPullRequest: {
+              repository: "owner/repo",
+              number: 7,
+              url: "https://github.com/owner/repo/pull/7",
+            },
+          },
+          {
+            environmentId,
+            id: ThreadId.make("thread-e"),
+            pullRequests: [],
+            branchPullRequest: {
+              repository: "owner/repo",
+              number: 7,
+              url: "https://gitlab.com/owner/repo/-/merge_requests/7",
+            },
+          },
+          {
+            environmentId: EnvironmentId.make("other"),
+            id: threadC,
+            pullRequests: [{ repository: "owner/repo", number: 7, host: "github.com" }],
+          },
+        ],
+        environmentId,
+        { repository: "owner/repo", number: 7, host: "github.com" },
+      ),
+    ).toEqual([threadA, ThreadId.make("thread-d")]);
+  });
 });
 
 vi.mock("./session.ts", () => ({

@@ -32,8 +32,10 @@ import {
 import {
   asLaunchingThread,
   createInboxReturnTracker,
-  isThreadWorking,
+  isThreadWorkingOrSourceControlBusy,
 } from "@t3tools/client-runtime/state/thread-inbox";
+import { isThreadStackedActionRunning } from "@t3tools/client-runtime/state/vcs";
+import { vcsActionManager } from "~/state/vcs";
 import { sortSettledThreads } from "@t3tools/client-runtime/state/thread-sort";
 import {
   nextShownOrder,
@@ -358,6 +360,8 @@ interface SidebarThreadPartitionInput {
   readonly workingShelfEnabled: boolean;
   /** Boring mode: folders list active threads by the user's latest message. */
   readonly sortActiveBySend: boolean;
+  /** Threads with an in-flight commit / push / PR on this client. */
+  readonly stackedActionThreads: ReadonlyMap<string, unknown>;
   // Snooze wakes, the queued-turn grace and the Working shelf's exit grace depend
   // on the clock, so the minute tick, the precise snooze-wake tick and the inbox
   // tracker's expiry version are inputs: a new key repartitions.
@@ -447,6 +451,7 @@ function useSidebarThreads(input: {
     inboxReturns.subscribe,
     inboxReturns.getSnapshot,
   );
+  const stackedActionThreads = useAtomValue(vcsActionManager.stackedActionThreadsAtom);
   const nowMinute = useNowMinute();
   // Minute-quantized clocks would delay second-precise snooze wakes by up to a minute.
   const snoozeWakeClock = useSnoozeWakeClock(threads);
@@ -487,7 +492,8 @@ function useSidebarThreads(input: {
     optimisticDrop,
     workingShelfEnabled,
     sortActiveBySend: folderGroups !== null,
-    clockKey: `${nowMinute}:${snoozeWakeClock}:${inboxReturnsVersion}`,
+    stackedActionThreads,
+    clockKey: `${nowMinute}:${snoozeWakeClock}:${inboxReturnsVersion}:${[...stackedActionThreads.keys()].join(",")}`,
   });
 
   const { pinnedThreads, activeThreads, workingThreads, snoozedThreads, settledThreads } =
@@ -622,18 +628,30 @@ function partitionSidebarThreads(input: SidebarThreadPartitionInput) {
     optimisticDrop,
     workingShelfEnabled,
     sortActiveBySend,
+    stackedActionThreads,
   } = input;
   const preciseNow = new Date().toISOString();
   const visible = filterSidebarV2VisibleThreads(threads, scopedProjectKeys, delegatedUnderParent);
-  const inboxObservation = inboxReturns.observe(workingShelfEnabled ? threads : null);
+  const sourceControlWorking = (
+    thread: Parameters<typeof isThreadWorkingOrSourceControlBusy>[0] & {
+      readonly environmentId: EnvironmentThreadShell["environmentId"];
+      readonly id: EnvironmentThreadShell["id"];
+    },
+  ) =>
+    isThreadWorkingOrSourceControlBusy(
+      thread,
+      isThreadStackedActionRunning(thread, stackedActionThreads),
+    );
+  const inboxObservation = inboxReturns.observe(workingShelfEnabled ? threads : null, {
+    isWorking: sourceControlWorking,
+  });
   const pinned: EnvironmentThreadShell[] = [];
   const active: EnvironmentThreadShell[] = [];
   const working: EnvironmentThreadShell[] = [];
+  const threadIsWorking = (thread: EnvironmentThreadShell, manuallyMoved = false) =>
+    manuallyMoved ? sourceControlWorking(thread) : inboxObservation.isWorking(thread);
   const inbox = (thread: EnvironmentThreadShell, manuallyMoved = false) =>
-    workingShelfEnabled &&
-    (manuallyMoved ? isThreadWorking(thread) : inboxObservation.isWorking(thread))
-      ? working
-      : active;
+    workingShelfEnabled && threadIsWorking(thread, manuallyMoved) ? working : active;
   const snoozed: EnvironmentThreadShell[] = [];
   const settled: EnvironmentThreadShell[] = [];
   const { draggableThreadKeys, activeReorderableThreadKeys } = resolveSidebarReorderableThreadKeys({

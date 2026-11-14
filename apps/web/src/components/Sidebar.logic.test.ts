@@ -313,6 +313,26 @@ describe("resolveSidebarThreadStatus", () => {
     ).toBe("waiting");
   });
 
+  it("labels in-flight commit, push, PR, or merge only when nothing else owns the row", () => {
+    expect(resolveSidebarThreadStatus(idle, { sourceControlStatus: "committing" })).toBe(
+      "committing",
+    );
+    expect(resolveSidebarThreadStatus(idle, { sourceControlStatus: "pushing" })).toBe("pushing");
+    expect(resolveSidebarThreadStatus(idle, { sourceControlStatus: "submitting" })).toBe(
+      "submitting",
+    );
+    expect(resolveSidebarThreadStatus(idle, { sourceControlStatus: "merging" })).toBe("merging");
+    expect(
+      resolveSidebarThreadStatus(
+        { ...idle, hasPendingUserInput: true },
+        { sourceControlStatus: "committing" },
+      ),
+    ).toBe("input");
+    expect(
+      resolveSidebarThreadStatus({ ...idle, runtime }, { sourceControlStatus: "pushing" }),
+    ).toBe("working");
+  });
+
   it("titles the window with live work and requests only", () => {
     const cases = [
       [{ ...idle, hasPendingApprovals: true, runtime }, "Needs approval"],
@@ -1687,6 +1707,11 @@ describe("resolveSidebarFolderDot", () => {
     expect(resolveSidebarFolderDot([idle, working])).toBe("working");
     expect(resolveSidebarFolderDot([working, unread])).toBe("unread");
     expect(resolveSidebarFolderDot([unread, limited])).toBe("attention");
+    expect(
+      resolveSidebarFolderDot([idle], {
+        sourceControlStatusForThread: () => "merging",
+      }),
+    ).toBe("working");
   });
 });
 

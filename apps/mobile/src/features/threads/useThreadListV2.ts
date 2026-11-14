@@ -1,10 +1,14 @@
 import type { OlderSettledScope } from "@t3tools/client-runtime/state/threads";
+import { isThreadWorkingOrSourceControlBusy } from "@t3tools/client-runtime/state/thread-inbox";
+import { isThreadStackedActionRunning } from "@t3tools/client-runtime/state/vcs";
 import type { EnvironmentId } from "@t3tools/contracts";
+import { useAtomValue } from "@effect/atom-react";
 import { useMemo, useSyncExternalStore } from "react";
 
 import { scopedProjectKey } from "../../lib/scopedEntities";
 import { useOlderSettledShelf, useOlderSettledShelfGrowth } from "../../state/olderSettledShelf";
 import type { PendingNewTask } from "../../state/use-pending-new-tasks";
+import { vcsActionManager } from "../../state/vcs";
 import {
   buildThreadListV2Items,
   buildThreadListV2ListItems,
@@ -35,8 +39,15 @@ type LayoutInput = Parameters<typeof buildThreadListV2Items>[0];
 function observeInbox(
   threads: Parameters<typeof threadListInboxReturns.observe>[0],
   _expiredGraceVersion: number,
+  stackedActionThreads: ReadonlyMap<string, unknown>,
 ) {
-  return threadListInboxReturns.observe(threads);
+  return threadListInboxReturns.observe(threads, {
+    isWorking: (thread) =>
+      isThreadWorkingOrSourceControlBusy(
+        thread,
+        isThreadStackedActionRunning(thread, stackedActionThreads),
+      ),
+  });
 }
 
 /**
@@ -76,10 +87,12 @@ export function useThreadListV2(input: {
     threadListInboxReturns.subscribe,
     threadListInboxReturns.getSnapshot,
   );
+  const stackedActionThreads = useAtomValue(vcsActionManager.stackedActionThreadsAtom);
   const inbox = useMemo(
-    () => observeInbox(workingShelfEnabled ? threads : null, inboxVersion),
-    [threads, workingShelfEnabled, inboxVersion],
+    () => observeInbox(workingShelfEnabled ? threads : null, inboxVersion, stackedActionThreads),
+    [threads, workingShelfEnabled, inboxVersion, stackedActionThreads],
   );
+  const isWorking = inbox.isWorking;
   // Compute move availability per section; per-row planning is quadratic.
   const moveAvailability = useMemo(() => {
     const sectionAvailability = (section: "pinned" | "active") =>
@@ -148,7 +161,7 @@ export function useThreadListV2(input: {
         workingShelfEnabled,
         workingShelfExpanded: input.workingShelfExpanded,
         inboxReturnAt: inbox.returnedAt,
-        isWorking: inbox.isWorking,
+        isWorking,
         snoozedShelfExpanded: input.snoozedShelfExpanded,
         settledShelfExpanded: input.settledShelfExpanded,
         selectedThreadKey: input.selectedThreadKey,
@@ -180,7 +193,7 @@ export function useThreadListV2(input: {
       workingShelfEnabled,
       input.workingShelfExpanded,
       inbox.returnedAt,
-      inbox.isWorking,
+      isWorking,
       input.snoozedShelfExpanded,
       input.settledShelfExpanded,
       input.selectedThreadKey,

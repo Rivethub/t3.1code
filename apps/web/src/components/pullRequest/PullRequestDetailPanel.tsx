@@ -56,6 +56,8 @@ import { isCommandPaletteOpen } from "~/commandPaletteBus";
 import { resolveShortcutCommand, type ShortcutMatchContext } from "~/keybindings";
 import { primaryServerKeybindingsAtom } from "~/state/server";
 import {
+  beginPullRequestMergeBusy,
+  endPullRequestMergeBusy,
   usePullRequestDefaultMergeMethodResolver,
   writeHandoffToComposer,
 } from "./usePullRequestActions";
@@ -779,6 +781,19 @@ export function PullRequestDetailPanel({
     updateMethod?: PullRequestUpdateMethod,
   ) => {
     onActed?.(action, "sent");
+    const mergeBusy =
+      action === "merge"
+        ? beginPullRequestMergeBusy(
+            environmentId,
+            reference,
+            JSON.stringify([
+              environmentId,
+              reference.host ?? null,
+              reference.repository,
+              reference.number,
+            ]),
+          )
+        : null;
     const result = await runAction({
       environmentId,
       input: {
@@ -787,6 +802,8 @@ export function PullRequestDetailPanel({
         ...(method ? { mergeMethod: method } : {}),
         ...(updateMethod ? { updateMethod } : {}),
       },
+    }).finally(() => {
+      endPullRequestMergeBusy(environmentId, mergeBusy);
     });
     setPendingAction(null);
     if (result._tag === "Failure") {
