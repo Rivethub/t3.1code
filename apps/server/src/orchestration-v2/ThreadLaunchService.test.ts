@@ -219,7 +219,9 @@ function makeHarness(options: HarnessOptions = {}) {
       fetchWorktreeBaseCommit:
         options.fetchWorktreeBaseCommit ??
         (() => Effect.succeed({ commitSha: "remote-main-sha", remoteRefName: "origin/main" })),
-      hasCommit: options.hasCommit ?? (() => Effect.succeed(false)),
+      // Start refs and HEAD have commits; branch-name probes find no colliding branch.
+      hasCommit:
+        options.hasCommit ?? (({ refName }) => Effect.succeed(!refName.startsWith("refs/heads/"))),
       currentBranch: () => Effect.succeed(null),
       resolveWorktreeBaseRemote: () => Effect.succeed({ remoteName: "origin", branchName: "main" }),
       resolvePrimaryRemoteName: () => Effect.succeed("origin"),
@@ -1063,7 +1065,10 @@ it.effect.each([
           [projectId]: { branchNamingMode: "static", branchNamePrefix: scenario.prefix },
         },
       },
-      hasCommit: ({ refName }) => Effect.succeed(refName === `refs/heads/${scenario.collision}`),
+      hasCommit: ({ refName }) =>
+        Effect.succeed(
+          refName === `refs/heads/${scenario.collision}` || !refName.startsWith("refs/heads/"),
+        ),
       generateBranchName: () =>
         Deferred.succeed(namingAttempted, undefined).pipe(
           Effect.andThen(
@@ -1498,6 +1503,60 @@ it.effect("skips a stale tracking ref when the remote reports the base branch is
   ),
 );
 
+it.effect.each([":/initial", "-"])(
+  "creates a worktree from %s while HEAD is an unborn branch",
+  (baseRef) =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const git = yield* GitVcsDriver.GitVcsDriver;
+      const directory = yield* fs.makeTempDirectoryScoped({ prefix: "launch-unborn-head-" });
+      const cwd = `${directory}/repo`;
+      const worktreePath = `${directory}/worktree`;
+      yield* fs.makeDirectory(cwd);
+      const command = (at: string, args: string[]) =>
+        git.execute({ operation: "launch-test", cwd: at, args });
+      yield* command(cwd, ["init", "-b", "main"]);
+      yield* command(cwd, ["config", "user.name", "Test"]);
+      yield* command(cwd, ["config", "user.email", "test@example.test"]);
+      yield* command(cwd, ["commit", "--allow-empty", "-m", "initial"]);
+      const expected = (yield* command(cwd, ["rev-parse", "main"])).stdout.trim();
+      // Leaving main makes it `@{-1}`; the orphan switch adds no reflog entry.
+      yield* command(cwd, ["checkout", "-b", "side"]);
+      yield* command(cwd, ["checkout", "--orphan", "unborn"]);
+
+      const harness = makeHarness({
+        hasCommit: ({ refName }) =>
+          command(cwd, ["rev-parse", "--verify", `${refName}^{commit}`]).pipe(
+            Effect.as(true),
+            Effect.orElseSucceed(() => false),
+          ),
+        createWorktree: (input, progress) =>
+          git.createWorktree({ ...input, cwd, path: worktreePath }, progress),
+      });
+      yield* Effect.gen(function* () {
+        const launches = yield* ThreadLaunch.ThreadLaunchService;
+        const launched = yield* launches.launch(
+          launchInput({
+            command: `command:launch:unborn-head:${baseRef}`,
+            thread: `thread:launch:unborn-head:${baseRef}`,
+            message: "Reply with OK only",
+            workspace: { type: "worktree", baseRef, branch: "feature", startFromOrigin: false },
+          }),
+        );
+        const projection = yield* preparationSettled(launched.threadId);
+        assert.equal(projection.thread.worktreePath, worktreePath);
+        assert.equal((yield* command(worktreePath, ["rev-parse", "HEAD"])).stdout.trim(), expected);
+      }).pipe(Effect.provide(harness.layer));
+    }).pipe(
+      Effect.provide(
+        GitVcsDriver.layer.pipe(
+          Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "launch-unborn-git-" })),
+          Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
+        ),
+      ),
+    ),
+);
+
 it.effect("fetches the origin base from the remote it already resolved", () => {
   let fetchInput: Deferred.Deferred<unknown> | null = null;
   const harness = makeHarness({
@@ -1518,6 +1577,64 @@ it.effect("fetches the origin base from the remote it already resolved", () => {
       refName: "main",
       remote: { remoteName: "origin", branchName: "main" },
     });
+  }).pipe(Effect.provide(harness.layer));
+});
+
+it.effect.each([
+  { name: "without an origin base", startFromOrigin: false },
+  { name: "whose origin has no base branch", startFromOrigin: true },
+])("runs in the project folder for a repository with no commits $name", (testCase) => {
+  const suffix = testCase.startFromOrigin ? "empty-origin" : "empty-local";
+  const harness = makeHarness({
+    hasCommit: () => Effect.succeed(false),
+    fetchWorktreeBaseCommit: () => Effect.succeed(null),
+  });
+  return Effect.gen(function* () {
+    const launches = yield* ThreadLaunch.ThreadLaunchService;
+    const tracker = yield* WorktreeSetupTracker.WorktreeSetupTracker;
+    const launched = yield* launches.launch(
+      launchInput({
+        command: `command:launch:${suffix}`,
+        thread: `thread:launch:${suffix}`,
+        message: "Reply with OK only",
+        workspace: {
+          type: "worktree",
+          baseRef: "main",
+          startFromOrigin: testCase.startFromOrigin,
+        },
+      }),
+    );
+    const projection = yield* preparationSettled(launched.threadId);
+    assert.equal(projection.runs[0]?.status, "starting");
+    assert.deepEqual(projection.runs[0]?.workspacePreparation, { type: "root" });
+    assert.isNull(projection.thread.worktreePath);
+    assert.isNull(projection.thread.branch);
+    assert.equal(harness.createWorktree.mock.calls.length, 0);
+    const checkout = (yield* tracker.get(launched.threadId))?.stages.find(
+      (stage) => stage.id === "checkout",
+    );
+    assert.equal(checkout?.status, "skipped");
+    assert.equal(checkout?.detail, "no commits yet, using project folder");
+  }).pipe(Effect.provide(harness.layer));
+});
+
+it.effect("checks out the origin base when the local repository has no commits", () => {
+  const harness = makeHarness({
+    hasCommit: ({ refName }) => Effect.succeed(refName === "remote-main-sha"),
+  });
+  return Effect.gen(function* () {
+    const launches = yield* ThreadLaunch.ThreadLaunchService;
+    const launched = yield* launches.launch(
+      launchInput({
+        command: "command:launch:empty-repo-origin",
+        thread: "thread:launch:empty-repo-origin",
+        message: "Reply with OK only",
+        workspace: { type: "worktree", baseRef: "main", startFromOrigin: true },
+      }),
+    );
+    const projection = yield* preparationSettled(launched.threadId);
+    assert.equal(projection.thread.worktreePath, "/repo-worktrees/feature");
+    assert.equal(harness.createWorktree.mock.calls[0]?.[0]?.refName, "remote-main-sha");
   }).pipe(Effect.provide(harness.layer));
 });
 

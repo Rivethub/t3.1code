@@ -11941,6 +11941,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           updatedAt: now,
         },
       });
+      // An empty repository has no commit for a worktree, so launch ran in the project
+      // folder. Record that, or queue promotion reads it as failed worktree setup.
+      const ranInProjectFolder =
+        state.run.workspacePreparation?.type === "worktree" &&
+        projection.thread.worktreePath === null;
       yield* emitEvent({
         type: "run.updated",
         threadId: command.threadId,
@@ -11948,7 +11953,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         nodeId: state.rootNode.id,
         providerInstanceId: state.run.providerInstanceId,
         occurredAt: now,
-        payload: { ...state.run, status: "starting" },
+        payload: {
+          ...state.run,
+          status: "starting",
+          ...(ranInProjectFolder ? { workspacePreparation: { type: "root" as const } } : {}),
+        },
       });
       yield* Ref.update(effects, (existing) => [
         ...existing,

@@ -692,96 +692,124 @@ const make = Effect.gen(function* () {
             }
           }
         }
-        yield* setupTracker.stageStatus(threadId, "checkout", "running");
-        let submoduleProgressReportedAt = Number.NEGATIVE_INFINITY;
-        const worktree = yield* git
-          .createWorktree(
-            {
-              cwd: project.workspaceRoot,
-              refName: startRef,
-              newRefName: branch!,
-              baseRefName,
-              path: null,
-            },
-            {
-              progress: {
-                onWorktreeClaimed: (path) =>
-                  Effect.sync(() => {
-                    createdWorktreePath = path;
-                    createdBranch = branch;
-                  }),
-                onCheckoutProgress: (progress) =>
-                  setupTracker.stage(threadId, "checkout", { percent: progress.percent }),
-                onSubmodulesStarted: () =>
-                  setupTracker
-                    .stageStatus(threadId, "checkout", "done")
-                    .pipe(
-                      Effect.andThen(setupTracker.stageStatus(threadId, "submodules", "running")),
-                    ),
-                onSubmodulesDisabled: ({ source }) =>
-                  setupTracker.stageStatus(
-                    threadId,
-                    "submodules",
-                    "skipped",
-                    `disabled in ${source}`,
-                  ),
-                onSubmoduleLine: (line) => {
-                  // Paths may contain quotes; git closes the path with "': ".
-                  const submodulePath = /^\s*Submodule path '(.+)': /.exec(line)?.[1];
-                  if (submodulePath !== undefined) {
-                    return setupTracker.stage(threadId, "submodules", { detail: submodulePath });
-                  }
-                  if (parseGitCloneProgressLine(line) === null) return Effect.void;
-                  // Git redraws on every percent; hold the websocket to one update a second.
-                  return Effect.flatMap(Clock.currentTimeMillis, (now) => {
-                    if (now - submoduleProgressReportedAt < 1000) return Effect.void;
-                    submoduleProgressReportedAt = now;
-                    return setupTracker.stage(threadId, "submodules", {
-                      detail: line.trim().replace(/\s+/g, " "),
-                    });
-                  });
-                },
-                onSubmodulesFinished: ({ ok, detail }) =>
-                  setupTracker.stageStatus(
-                    threadId,
-                    "submodules",
-                    ok ? "done" : "warning",
-                    ok ? undefined : (detail ?? "submodule checkout failed"),
-                  ),
-              },
-            },
-          )
-          .pipe(
-            Effect.catchIf(
-              (error) => error.reason === "ref_not_found",
-              (cause) =>
-                Effect.fail(
-                  new ThreadLaunchBaseRefError({
-                    projectId: project.id,
-                    projectTitle: project.title,
-                    workspaceRoot: project.workspaceRoot,
-                    baseRef: requestedBaseRef,
-                    cause,
-                  }),
-                ),
+        // `git worktree add` needs a commit. After fetch, if neither the start
+        // ref nor HEAD has one, run in the project folder like a non-Git project.
+        const hasCommit = (refName: string) =>
+          git
+            .hasCommit({ cwd: project.workspaceRoot, refName })
+            .pipe(Effect.mapError(mapError(input, "provision-worktree", threadId)));
+        // Probe as checkWorktreeBase does: `-` is the previous checkout, and a `:/text`
+        // search cannot take `^{commit}`, so leave it to `git worktree add`.
+        const startRefHasCommit =
+          startRef.startsWith(":") || (yield* hasCommit(startRef === "-" ? "@{-1}" : startRef));
+        if (!startRefHasCommit && !(yield* hasCommit("HEAD"))) {
+          branch = null;
+          yield* setupTracker.update(threadId, (snapshot) => ({
+            ...snapshot,
+            stages: snapshot.stages.map((stage) =>
+              stage.id === "submodules" && stage.status === "pending"
+                ? { ...stage, status: "skipped", detail: "none" }
+                : stage,
             ),
-            Effect.mapError(mapError(input, "provision-worktree", threadId)),
+          }));
+          yield* setupTracker.stageStatus(
+            threadId,
+            "checkout",
+            "skipped",
+            "no commits yet, using project folder",
           );
-        worktreePath = worktree.worktree.path;
-        branch = worktree.worktree.refName;
-        createdWorktreePath = worktreePath;
-        createdBranch = branch;
-        yield* setupTracker.update(threadId, (snapshot) => ({
-          ...snapshot,
-          worktreePath,
-          branch,
-          stages: snapshot.stages.map((stage) =>
-            stage.id === "submodules" && stage.status === "pending"
-              ? { ...stage, status: "skipped", detail: "none" }
-              : stage,
-          ),
-        }));
-        yield* setupTracker.stageStatus(threadId, "checkout", "done");
+        } else {
+          yield* setupTracker.stageStatus(threadId, "checkout", "running");
+          let submoduleProgressReportedAt = Number.NEGATIVE_INFINITY;
+          const worktree = yield* git
+            .createWorktree(
+              {
+                cwd: project.workspaceRoot,
+                refName: startRef,
+                newRefName: branch!,
+                baseRefName,
+                path: null,
+              },
+              {
+                progress: {
+                  onWorktreeClaimed: (path) =>
+                    Effect.sync(() => {
+                      createdWorktreePath = path;
+                      createdBranch = branch;
+                    }),
+                  onCheckoutProgress: (progress) =>
+                    setupTracker.stage(threadId, "checkout", { percent: progress.percent }),
+                  onSubmodulesStarted: () =>
+                    setupTracker
+                      .stageStatus(threadId, "checkout", "done")
+                      .pipe(
+                        Effect.andThen(setupTracker.stageStatus(threadId, "submodules", "running")),
+                      ),
+                  onSubmodulesDisabled: ({ source }) =>
+                    setupTracker.stageStatus(
+                      threadId,
+                      "submodules",
+                      "skipped",
+                      `disabled in ${source}`,
+                    ),
+                  onSubmoduleLine: (line) => {
+                    // Paths may contain quotes; git closes the path with "': ".
+                    const submodulePath = /^\s*Submodule path '(.+)': /.exec(line)?.[1];
+                    if (submodulePath !== undefined) {
+                      return setupTracker.stage(threadId, "submodules", { detail: submodulePath });
+                    }
+                    if (parseGitCloneProgressLine(line) === null) return Effect.void;
+                    // Git redraws on every percent; hold the websocket to one update a second.
+                    return Effect.flatMap(Clock.currentTimeMillis, (now) => {
+                      if (now - submoduleProgressReportedAt < 1000) return Effect.void;
+                      submoduleProgressReportedAt = now;
+                      return setupTracker.stage(threadId, "submodules", {
+                        detail: line.trim().replace(/\s+/g, " "),
+                      });
+                    });
+                  },
+                  onSubmodulesFinished: ({ ok, detail }) =>
+                    setupTracker.stageStatus(
+                      threadId,
+                      "submodules",
+                      ok ? "done" : "warning",
+                      ok ? undefined : (detail ?? "submodule checkout failed"),
+                    ),
+                },
+              },
+            )
+            .pipe(
+              Effect.catchIf(
+                (error) => error.reason === "ref_not_found",
+                (cause) =>
+                  Effect.fail(
+                    new ThreadLaunchBaseRefError({
+                      projectId: project.id,
+                      projectTitle: project.title,
+                      workspaceRoot: project.workspaceRoot,
+                      baseRef: requestedBaseRef,
+                      cause,
+                    }),
+                  ),
+              ),
+              Effect.mapError(mapError(input, "provision-worktree", threadId)),
+            );
+          worktreePath = worktree.worktree.path;
+          branch = worktree.worktree.refName;
+          createdWorktreePath = worktreePath;
+          createdBranch = branch;
+          yield* setupTracker.update(threadId, (snapshot) => ({
+            ...snapshot,
+            worktreePath,
+            branch,
+            stages: snapshot.stages.map((stage) =>
+              stage.id === "submodules" && stage.status === "pending"
+                ? { ...stage, status: "skipped", detail: "none" }
+                : stage,
+            ),
+          }));
+          yield* setupTracker.stageStatus(threadId, "checkout", "done");
+        }
       }
 
       // Do not rewrite reused worktrees; that could undo the original branch rename.
