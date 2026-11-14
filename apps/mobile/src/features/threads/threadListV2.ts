@@ -246,6 +246,80 @@ export function threadHasUnseenCompletion(
   return completedAtMs > lastVisitedAtMs;
 }
 
+/** Listed idle (ready) threads — Done rows that still sit in the open list. */
+export function isIdleThread(
+  thread: Pick<
+    EnvironmentThreadShell,
+    | "archivedAt"
+    | "lineage"
+    | "settledOverride"
+    | "hasPendingApprovals"
+    | "hasPendingUserInput"
+    | "pendingSubagentRequest"
+    | "pendingGuestMessageCount"
+    | "runtime"
+    | "blockedOnThreadWait"
+    | "snoozedUntil"
+    | "snoozedAt"
+    | "pendingUserInputAt"
+    | "latestRun"
+  >,
+  options: { readonly now: string },
+): boolean {
+  if (thread.archivedAt !== null || !isListedThreadLineage(thread.lineage)) return false;
+  if (thread.settledOverride === "settled") return false;
+  // Match the open list: snoozed shelves are not idle Done rows.
+  if (effectiveSnoozed(thread, options)) return false;
+  return resolveThreadListV2Status(thread) === "ready";
+}
+
+/** Count for the Messages-style badge on the thread back button. */
+export function countIdleThreads(
+  threads: ReadonlyArray<
+    Pick<
+      EnvironmentThreadShell,
+      | "id"
+      | "environmentId"
+      | "archivedAt"
+      | "lineage"
+      | "settledOverride"
+      | "hasPendingApprovals"
+      | "hasPendingUserInput"
+      | "pendingSubagentRequest"
+      | "pendingGuestMessageCount"
+      | "runtime"
+      | "blockedOnThreadWait"
+      | "snoozedUntil"
+      | "snoozedAt"
+      | "pendingUserInputAt"
+      | "latestRun"
+    >
+  >,
+  options: {
+    readonly now: string;
+    readonly excludeThread?: { readonly environmentId: string; readonly threadId: string };
+  },
+): number {
+  let count = 0;
+  for (const thread of threads) {
+    if (
+      options.excludeThread !== undefined &&
+      thread.id === options.excludeThread.threadId &&
+      thread.environmentId === options.excludeThread.environmentId
+    ) {
+      continue;
+    }
+    if (isIdleThread(thread, options)) count += 1;
+  }
+  return count;
+}
+
+/** Glyphs for the back-button count; VoiceOver still hears the exact number. */
+export function formatBackCount(count: number): string {
+  if (count <= 0) return "";
+  return count > 99 ? "99+" : String(count);
+}
+
 export function resolveThreadListV2WokeAt(
   thread: EnvironmentThreadShell,
   options: { readonly now: string },

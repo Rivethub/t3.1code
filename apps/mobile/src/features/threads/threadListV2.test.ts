@@ -45,6 +45,9 @@ import {
   resolveThreadListV2WokeAt,
   threadListV2ListItemsAreEqual,
   threadHasUnseenCompletion,
+  countIdleThreads,
+  formatBackCount,
+  isIdleThread,
   type ThreadListV2ListItem,
 } from "./threadListV2";
 
@@ -225,6 +228,75 @@ describe("resolveThreadListV2Status", () => {
       expect(threadHasUnseenCompletion(thread)).toBe(true);
     },
   );
+});
+
+describe("countIdleThreads", () => {
+  const idle = () =>
+    presentThreadShell(
+      environmentId,
+      decodeThreadShell(
+        makeRawThreadShell({
+          latestRunId: RunId.make("run-idle"),
+          status: "completed",
+          latestRunCompletedAt: DateTime.makeUnsafe(NOW),
+        }),
+      ),
+    );
+
+  it("counts ready threads, including already-visited ones", () => {
+    const ready = idle();
+    const blocked = { ...ready, id: ThreadId.make("blocked"), hasPendingApprovals: true };
+    expect(isIdleThread(ready, { now: NOW })).toBe(true);
+    expect(isIdleThread(blocked, { now: NOW })).toBe(false);
+    expect(countIdleThreads([ready, blocked], { now: NOW })).toBe(1);
+  });
+
+  it("skips settled and archived threads", () => {
+    const ready = idle();
+    expect(
+      countIdleThreads(
+        [
+          { ...ready, settledOverride: "settled" },
+          { ...ready, archivedAt: NOW },
+        ],
+        { now: NOW },
+      ),
+    ).toBe(0);
+  });
+
+  it("skips threads still on the snoozed shelf", () => {
+    const ready = idle();
+    const snoozed = {
+      ...ready,
+      id: ThreadId.make("snoozed"),
+      snoozedUntil: "2026-06-03T00:00:00.000Z",
+      snoozedAt: "2026-06-01T00:00:00.000Z",
+    };
+    expect(isIdleThread(snoozed, { now: NOW })).toBe(false);
+    expect(countIdleThreads([ready, snoozed], { now: NOW })).toBe(1);
+    expect(countIdleThreads([ready, snoozed], { now: "2026-06-03T00:00:00.000Z" })).toBe(2);
+  });
+
+  it("can exclude the open thread in its environment only", () => {
+    const ready = idle();
+    const otherEnvironment = {
+      ...ready,
+      environmentId: EnvironmentId.make("environment-2"),
+    };
+    expect(
+      countIdleThreads([ready, otherEnvironment], {
+        now: NOW,
+        excludeThread: { environmentId: ready.environmentId, threadId: ready.id },
+      }),
+    ).toBe(1);
+  });
+
+  it("formats the back-button glyphs like Messages", () => {
+    expect(formatBackCount(0)).toBe("");
+    expect(formatBackCount(3)).toBe("3");
+    expect(formatBackCount(99)).toBe("99");
+    expect(formatBackCount(100)).toBe("99+");
+  });
 });
 
 describe("resolveThreadListV2SwipeActions", () => {

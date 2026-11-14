@@ -110,6 +110,7 @@ import {
   threadRouteOpensDraft,
 } from "./thread-route-hydration";
 import { ThreadHeader } from "./ThreadHeader";
+import { useIdleThreadCount } from "./useIdleThreadCount";
 import { resumeThread } from "./resume-thread";
 import {
   useAndroidWorkspaceBack,
@@ -137,12 +138,22 @@ const InspectorHeaderShownContext = createContext(false);
 
 function ThreadRouteFallbackLayout(props: { readonly children: ReactNode }) {
   const goBack = useWorkspaceBackNavigation();
+  const routeParams = useRoute().params as
+    | { readonly environmentId?: string | string[]; readonly threadId?: string | string[] }
+    | undefined;
+  const routeEnvironmentId = firstRouteParam(routeParams?.environmentId);
+  const routeThreadId = firstRouteParam(routeParams?.threadId);
+  const backCount = useIdleThreadCount(
+    routeEnvironmentId !== null && routeThreadId !== null
+      ? { environmentId: routeEnvironmentId, threadId: routeThreadId }
+      : undefined,
+  );
   const inspectorHeaderShown = use(InspectorHeaderShownContext);
   return (
     <ThreadScreenFallback
       header={
         inspectorHeaderShown ? undefined : (
-          <AppBar title="Thread" onBackToList={goBack} hideBottomBorder />
+          <AppBar title="Thread" onBackToList={goBack} backCount={backCount} hideBottomBorder />
         )
       }
     >
