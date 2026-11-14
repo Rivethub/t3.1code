@@ -1,3 +1,4 @@
+import { aiReviewerOneLine } from "@t3tools/client-runtime/ai-reviewer-feedback";
 import type {
   EnvironmentId,
   PullRequestActor,
@@ -32,8 +33,9 @@ import {
   mergePullRequestThreadComments,
   visibleBody,
 } from "./pullRequestDetail.logic";
+import { pullRequestAiReviewerFeedback } from "./PullRequestAiReviewerFinding";
 import { PullRequestActorAvatar, PullRequestActorLabel } from "./pullRequestPresentation";
-import { PullRequestMarkdown } from "./PullRequestMarkdown";
+import { PullRequestCommentBody } from "./PullRequestCommentBody";
 import { PullRequestMarkdownEditor } from "./PullRequestMarkdownEditor";
 import { PullRequestReactionBar } from "./PullRequestReactions";
 import type { PendingReviewComment } from "./pullRequestReviewStore";
@@ -224,7 +226,11 @@ export function ReviewThreadCard({
   /** Set on a diff line. Hidden draws nothing but stays mounted, so an unsent reply survives. */
   hidden?: boolean;
 }) {
-  const [expanded, setExpanded] = useState(hidden !== undefined || !thread.isResolved);
+  const rootFeedback = pullRequestAiReviewerFeedback(thread.comments[0] ?? { body: "" });
+  // AI findings stay one line until opened; human threads still open when unresolved.
+  const [expanded, setExpanded] = useState(
+    hidden !== undefined || (!thread.isResolved && rootFeedback === null),
+  );
   const [replying, setReplying] = useState(false);
   const [reply, setReply] = useState("");
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -240,6 +246,11 @@ export function ReviewThreadCard({
   const nextCommentsCursor =
     currentPage === null ? (thread.nextCommentsCursor ?? null) : currentPage.nextCursor;
   const commentCount = thread.commentCount ?? comments.length;
+  const headerFeedback = pullRequestAiReviewerFeedback(comments[0] ?? { body: "" }) ?? rootFeedback;
+  const headerLabel =
+    headerFeedback !== null
+      ? aiReviewerOneLine(headerFeedback)
+      : `${thread.isResolved ? "Resolved" : "Open"} · ${commentCount} ${commentCount === 1 ? "comment" : "comments"}`;
 
   const saveEdit = async (commentId: string, body: string) => {
     if (savingEdit) return;
@@ -313,42 +324,49 @@ export function ReviewThreadCard({
         )}
         <button
           type="button"
-          className="hover:text-foreground"
+          className="min-w-0 flex-1 truncate text-left hover:text-foreground"
           aria-expanded={expanded}
           onClick={() => setExpanded((current) => !current)}
         >
-          {thread.isResolved ? "Resolved" : "Open"} · {commentCount}{" "}
-          {commentCount === 1 ? "comment" : "comments"}
+          {headerLabel}
         </button>
-        {thread.isOutdated ? <span>outdated</span> : null}
-        {onFix ? (
-          <Button
-            size="compact"
-            variant="ghost"
-            className="ml-auto"
-            disabled={pending || fixPending}
-            onClick={onFix}
-          >
-            <HammerIcon className="size-3" />
-            {fixPending ? "Preparing..." : fixLabel}
-          </Button>
+        {headerFeedback !== null && commentCount > 1 ? (
+          <span className="shrink-0">{commentCount} comments</span>
         ) : null}
-        {onAddToChat && comments.some((comment) => visibleBody(comment.body) !== null) ? (
-          <Button
-            size="compact"
-            variant="ghost"
-            className={onFix ? undefined : "ml-auto"}
-            onClick={() => onAddToChat({ ...thread, comments })}
-          >
-            <MessageSquarePlusIcon className="size-3" />
-            Add to chat
-          </Button>
+        {thread.isOutdated ? <span>outdated</span> : null}
+        {onFix ||
+        (onAddToChat && comments.some((comment) => visibleBody(comment.body) !== null)) ? (
+          <div className="flex shrink-0 items-center gap-0.5">
+            {onFix ? (
+              <Button
+                size="compact"
+                variant="ghost"
+                className="shrink-0"
+                disabled={pending || fixPending}
+                onClick={onFix}
+              >
+                <HammerIcon />
+                {fixPending ? "Preparing..." : fixLabel}
+              </Button>
+            ) : null}
+            {onAddToChat && comments.some((comment) => visibleBody(comment.body) !== null) ? (
+              <Button
+                size="compact"
+                variant="ghost"
+                className="shrink-0"
+                onClick={() => onAddToChat({ ...thread, comments })}
+              >
+                <MessageSquarePlusIcon />
+                Add to chat
+              </Button>
+            ) : null}
+          </div>
         ) : null}
         {canResolve ? (
           <Button
             size="compact"
             variant="ghost"
-            className={onFix || onAddToChat ? undefined : "ml-auto"}
+            className="shrink-0"
             disabled={pending}
             onClick={onToggleResolved}
           >
@@ -391,11 +409,12 @@ export function ReviewThreadCard({
                   />
                 ) : (
                   <div className="mt-1 flex items-start gap-1">
-                    <PullRequestMarkdown
+                    <PullRequestCommentBody
                       className="min-w-0 flex-1 text-sm"
                       text={comment.body}
                       cwd={workspaceRoot}
                       environmentId={environmentId}
+                      aiCollapsed={false}
                     />
                     {canEditComment(comment) ? (
                       <PullRequestEditButton

@@ -3,6 +3,7 @@ import remarkParse from "remark-parse";
 import { unified } from "unified";
 import { describe, expect, it } from "vite-plus/test";
 
+import { withoutBotBadgeMarkdown } from "./PullRequestMarkdown";
 import { pullRequestCommentPreview, remarkPullRequestAutolinks } from "./pullRequestMarkdown.logic";
 
 type Node = {
@@ -70,5 +71,27 @@ describe("pullRequestCommentPreview", () => {
     [":codex-followup[Prepare **print** version]", ":codex-followup[Prepare **print** version]"],
   ])("extracts readable text from %s", (body, expected) => {
     expect(pullRequestCommentPreview(body)).toBe(expected);
+  });
+});
+
+describe("withoutBotBadgeMarkdown", () => {
+  it("blanks badge lines in place so task offsets stay aligned", () => {
+    const badge = "![fix](https://cursor.com/assets/images/fix-in-cursor-dark.png)";
+    const original = `${badge}\n\n- [ ] first task\n- [ ] second task`;
+    const filtered = withoutBotBadgeMarkdown(original);
+    expect(filtered.length).toBe(original.length);
+    expect(filtered).not.toContain("Fix-in-cursor");
+    const markerOffset = original.indexOf("- [ ] second task");
+    expect(filtered.slice(markerOffset, markerOffset + 15)).toBe("- [ ] second ta");
+  });
+
+  it("leaves badge-looking lines inside fenced code alone", () => {
+    const sample = [
+      "Example:",
+      "```md",
+      "![Fix](https://cursor.com/assets/images/fix-in-cursor-dark.png)",
+      "```",
+    ].join("\n");
+    expect(withoutBotBadgeMarkdown(sample)).toBe(sample);
   });
 });
