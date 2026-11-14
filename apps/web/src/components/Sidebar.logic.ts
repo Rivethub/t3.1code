@@ -912,6 +912,7 @@ export type SidebarThreadStatus =
   | "preparing"
   | "working"
   | "waiting"
+  | "stalled"
   | "failed"
   | "limited"
   | "ready";
@@ -927,7 +928,8 @@ export function shouldRecedeSidebarThread(input: {
     input.isActive ||
     input.isSelected ||
     input.status === "input" ||
-    input.status === "request"
+    input.status === "request" ||
+    input.status === "stalled"
   ) {
     return false;
   }
@@ -948,7 +950,10 @@ type SidebarThreadStatusInput = Pick<
   | "pendingGuestMessageCount"
   | "runtime"
   | "blockedOnThreadWait"
->;
+> & {
+  /** Quiet open agent work; computed by the row from the shell stall deadline. */
+  readonly stalled?: boolean;
+};
 
 export function resolveSidebarThreadStatus(thread: SidebarThreadStatusInput): SidebarThreadStatus {
   if (thread.hasPendingApprovals || thread.pendingSubagentRequest === "approval") {
@@ -960,6 +965,9 @@ export function resolveSidebarThreadStatus(thread: SidebarThreadStatusInput): Si
   // A guest is waiting on the owner; the agent's own requests come first.
   if ((thread.pendingGuestMessageCount ?? 0) > 0) {
     return "request";
+  }
+  if (thread.stalled === true) {
+    return "stalled";
   }
   if (thread.runtime?.status === "running" && thread.blockedOnThreadWait === true) {
     return "waiting";
@@ -1023,7 +1031,8 @@ export function resolveSidebarFolderDot(
     statuses.has("input") ||
     statuses.has("approval") ||
     statuses.has("request") ||
-    statuses.has("limited")
+    statuses.has("limited") ||
+    statuses.has("stalled")
   ) {
     return "attention";
   }
