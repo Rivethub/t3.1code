@@ -14,10 +14,9 @@ import { threadSearchMatchKey } from "@t3tools/client-runtime/state/thread-searc
 import { AnimatedLegendList } from "@legendapp/list/reanimated";
 import { THREAD_SIDEBAR_ROW_LAYOUT } from "./threadListAnimations";
 import { useAtomValue } from "@effect/atom-react";
-import { useMemo, useRef, useState } from "react";
+import { useMemo, useState } from "react";
 import { Platform, StyleSheet, View } from "react-native";
 import { GestureDetector, useNativeGesture } from "react-native-gesture-handler";
-import type { SwipeableMethods } from "react-native-gesture-handler/ReanimatedSwipeable";
 import { FLOATING_TABS } from "../layout/workspace/floating-workspace-tabs";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
@@ -51,6 +50,7 @@ import {
   sortHomeProjectScopes,
 } from "../home/homeThreadList";
 import { SwipeableScrollGateProvider, useSwipeableScrollGate } from "../home/thread-swipe-actions";
+import { useOpenThreadSwipeable } from "../home/use-open-thread-swipeable";
 import { usePendingTaskListActions } from "../home/usePendingTaskListActions";
 import { useThreadListActions } from "../home/useThreadListActions";
 import { useFabScroll } from "../home/FabScrollContext";
@@ -126,7 +126,12 @@ function ThreadNavigationSidebarPane(props: ThreadNavigationSidebarProps) {
   const threads = useAtomValue(steadyNavigationThreadShellsAtom);
   const { environments: workspaceEnvironments, state: catalogState } = useWorkspaceState();
   const { savedConnectionsById } = useSavedRemoteConnections();
-  const openSwipeableRef = useRef<SwipeableMethods | null>(null);
+  const {
+    handleSwipeableWillOpen,
+    handleSwipeableClose,
+    closeOpenSwipeable,
+    consumeOpenSwipeable,
+  } = useOpenThreadSwipeable();
   const sidebarScrollGesture = useNativeGesture();
   const {
     archiveThread,
@@ -249,6 +254,18 @@ function ThreadNavigationSidebarPane(props: ThreadNavigationSidebarProps) {
     toggleSnoozedShelf,
     toggleWorkingShelf,
   } = useThreadListV2ShelfPreferences();
+  const handleToggleWorkingShelf = () => {
+    if (consumeOpenSwipeable()) return;
+    toggleWorkingShelf();
+  };
+  const handleToggleSnoozedShelf = () => {
+    if (consumeOpenSwipeable()) return;
+    toggleSnoozedShelf();
+  };
+  const handleToggleSettledShelf = () => {
+    if (consumeOpenSwipeable()) return;
+    toggleSettledShelf();
+  };
   const now = useThreadListNow(threads);
   const listEnvironments = useAtomValue(threadListEnvironmentsAtom);
   const {
@@ -309,22 +326,11 @@ function ThreadNavigationSidebarPane(props: ThreadNavigationSidebarProps) {
         ]
       : threadListV2Items;
 
-  const handleSwipeableWillOpen = (methods: SwipeableMethods) => {
-    if (openSwipeableRef.current !== methods) {
-      openSwipeableRef.current?.close();
-      openSwipeableRef.current = methods;
-    }
-  };
-  const handleSwipeableClose = (methods: SwipeableMethods) => {
-    if (openSwipeableRef.current === methods) {
-      openSwipeableRef.current = null;
-    }
-  };
   // Destructure callback props; capturing all props would invalidate these row-closing handlers on unrelated changes.
-  const { onSelectThread, onOpenThreadPullRequests } = props;
+  const { onSelectThread, onOpenThreadPullRequests, onOpenPendingTask } = props;
   // A row listed for a message match opens the thread at that message, by
   // tap or by shortcut.
-  const handleSelectThread = (thread: EnvironmentThreadShell) => {
+  const openThread = (thread: EnvironmentThreadShell) => {
     const key = threadSearchMatchKey({ environmentId: thread.environmentId, threadId: thread.id });
     const messageId = contentOnlyThreadKeys.has(key)
       ? threadSearchMatchByKey.get(key)?.messageId
@@ -333,17 +339,28 @@ function ThreadNavigationSidebarPane(props: ThreadNavigationSidebarProps) {
       requestThreadMessageJump(scopedThreadKey(thread.environmentId, thread.id), messageId);
     }
     onSelectThread(thread);
-    openSwipeableRef.current?.close();
+  };
+  const handleSelectThread = (thread: EnvironmentThreadShell) => {
+    if (consumeOpenSwipeable()) return;
+    openThread(thread);
+  };
+  const handleSelectThreadFromShortcut = (thread: EnvironmentThreadShell) => {
+    closeOpenSwipeable();
+    openThread(thread);
   };
   const handleOpenThreadPullRequests = (
     thread: EnvironmentThreadShell,
     pr: ThreadPrPresentation,
   ) => {
+    if (consumeOpenSwipeable()) return;
     onOpenThreadPullRequests(thread, pr);
-    openSwipeableRef.current?.close();
+  };
+  const handleOpenPendingTask = (pendingTask: PendingNewTask) => {
+    if (consumeOpenSwipeable()) return;
+    onOpenPendingTask(pendingTask);
   };
   const handleScrollBeginDrag = () => {
-    openSwipeableRef.current?.close();
+    closeOpenSwipeable();
   };
   const onFabScroll = useFabScroll();
   const { swipeEnabled, scrollGateHandlers } = useSwipeableScrollGate({
@@ -361,7 +378,7 @@ function ThreadNavigationSidebarPane(props: ThreadNavigationSidebarProps) {
     threadSearchMatchByKey,
     workingShelfEnabled,
   };
-  useThreadJumpShortcuts(listItems, handleSelectThread);
+  useThreadJumpShortcuts(listItems, handleSelectThreadFromShortcut);
   const sidebarItemsAreEqual = (previous: SidebarListItem, item: SidebarListItem): boolean => {
     if (isThreadListV2ListItem(previous) && isThreadListV2ListItem(item)) {
       return threadListV2ListItemsAreEqual(previous, item);
@@ -399,7 +416,7 @@ function ThreadNavigationSidebarPane(props: ThreadNavigationSidebarProps) {
             environmentMachine={machineByEnvironmentId.get(item.pendingTask.environmentId)}
             pane="sidebar"
             showPendingDivider={item.showPendingDivider}
-            onSelectPendingTask={props.onOpenPendingTask}
+            onSelectPendingTask={handleOpenPendingTask}
             onDeletePendingTask={confirmDeletePendingTask}
             fullSwipeWidth={props.width - 20}
             onSwipeableClose={handleSwipeableClose}
@@ -491,7 +508,7 @@ function ThreadNavigationSidebarPane(props: ThreadNavigationSidebarProps) {
             count={item.count}
             disabled={item.disabled}
             expanded={item.expanded}
-            onToggle={toggleWorkingShelf}
+            onToggle={handleToggleWorkingShelf}
             pane="sidebar"
           />
         );
@@ -501,7 +518,7 @@ function ThreadNavigationSidebarPane(props: ThreadNavigationSidebarProps) {
             count={item.count}
             disabled={item.disabled}
             expanded={item.expanded}
-            onToggle={toggleSnoozedShelf}
+            onToggle={handleToggleSnoozedShelf}
             pane="sidebar"
           />
         );
@@ -511,7 +528,7 @@ function ThreadNavigationSidebarPane(props: ThreadNavigationSidebarProps) {
             count={item.count}
             disabled={item.disabled}
             expanded={item.expanded}
-            onToggle={toggleSettledShelf}
+            onToggle={handleToggleSettledShelf}
             pane="sidebar"
           />
         );
@@ -522,6 +539,7 @@ function ThreadNavigationSidebarPane(props: ThreadNavigationSidebarProps) {
             hiddenCount={item.hiddenCount}
             {...(item.state === undefined ? {} : { state: item.state })}
             onPress={() => {
+              if (consumeOpenSwipeable()) return;
               olderSettledShelf.retry();
               showMoreSettled();
             }}
