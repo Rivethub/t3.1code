@@ -116,6 +116,8 @@ import {
   FileSurfaceFailure,
   FileSurfaceLoading,
 } from "./fileSurfaceChrome";
+import { FileMarksMenu } from "./FileMarksMenu";
+import { collectXcodeMarks, updateXcodeMarkDecorations } from "./fileXcodeMarks";
 import SourceFilePreview from "./ReadOnlySourcePreview";
 import { resolveCenteredFileLineScrollTop } from "./fileLineReveal";
 import { DiffCommentAnnotation } from "../diffs/DiffCommentAnnotation";
@@ -511,6 +513,12 @@ function useFileLineReveal(
   revealRequestId: number,
 ): FilePostRender {
   const [revealStatesByPath] = useState(() => new Map<string, FileRevealState>());
+  // Virtualized post-renders reuse the same contents string; avoid re-parsing marks each frame.
+  const marksCacheRef = useRef<{
+    contents: string;
+    path: string;
+    marks: ReturnType<typeof collectXcodeMarks>;
+  } | null>(null);
 
   return (fileContainer, instance, phase) => {
     if (relativePath === null) return;
@@ -541,6 +549,18 @@ function useFileLineReveal(
     const targetLine =
       revealLine === null || contents === undefined ? null : clampFileLine(contents, revealLine);
     updateFileLinkReveal(fileContainer, targetLine);
+    const marks =
+      contents === undefined
+        ? []
+        : marksCacheRef.current?.contents === contents &&
+            marksCacheRef.current.path === relativePath
+          ? marksCacheRef.current.marks
+          : (() => {
+              const next = collectXcodeMarks(contents, relativePath);
+              marksCacheRef.current = { contents, path: relativePath, marks: next };
+              return next;
+            })();
+    updateXcodeMarkDecorations(fileContainer, marks);
 
     if (!(instance instanceof VirtualizedFile)) return;
 
@@ -1232,9 +1252,26 @@ export default function FilePreviewPanel({
   );
   const tableDelimiter =
     previewPath && attachment === undefined ? filePreviewDelimiter({ name: previewPath }) : null;
+  // Mark jumps are path-scoped and yield once a newer external reveal arrives, so a prior
+  // mark cannot steer another file or swallow a later line-link in this one.
+  // Mark ids stay above ordinary external reveal ids so a later equal external id is not treated as handled.
+  const markRequestIdRef = useRef(1_000_000_000);
+  const [markReveal, setMarkReveal] = useState<{
+    path: string;
+    line: number;
+    requestId: number;
+    baselineExternalRequestId: number;
+  } | null>(null);
+  const activeReveal =
+    markReveal !== null &&
+    relativePath !== null &&
+    markReveal.path === relativePath &&
+    revealRequestId <= markReveal.baselineExternalRequestId
+      ? { line: markReveal.line, requestId: markReveal.requestId }
+      : { line: revealLine, requestId: revealRequestId };
   const revealHandled =
-    revealLine === null ||
-    (handledReveal?.path === relativePath && handledReveal.requestId === revealRequestId);
+    activeReveal.line === null ||
+    (handledReveal?.path === relativePath && handledReveal.requestId === activeReveal.requestId);
   const renderMarkdown = isMarkdown && renderMarkdownPreferred && revealHandled;
   const renderMermaid = isMermaid && renderMermaidPreferred && revealHandled;
   const renderBrowserFile = isPdf || (isHtml && renderBrowserFilePreferred && revealHandled);
@@ -1342,7 +1379,25 @@ export default function FilePreviewPanel({
       : relativePath && attachment === undefined
         ? resolvePathLinkTarget(relativePath, cwd)
         : null;
-  const onFilePostRender = useFileLineReveal(relativePath, revealLine, revealRequestId);
+  const onFilePostRender = useFileLineReveal(
+    relativePath,
+    activeReveal.line,
+    activeReveal.requestId,
+  );
+  const sourceMarks =
+    previewPath !== null && file.data !== null && !isMedia && !isDocument
+      ? collectXcodeMarks(file.data.contents, previewPath)
+      : [];
+  const jumpToMark = (line: number) => {
+    if (relativePath === null) return;
+    setHandledReveal(null);
+    setMarkReveal({
+      path: relativePath,
+      line,
+      requestId: ++markRequestIdRef.current,
+      baselineExternalRequestId: revealRequestId,
+    });
+  };
   // Mounting the file read under the workspace mutation id refetches it after each mutation.
   useAtomMount(
     canReadFiles &&
@@ -1471,7 +1526,7 @@ export default function FilePreviewPanel({
                 setRenderedPreferred(pressed);
                 setHandledReveal(
                   pressed && relativePath !== null
-                    ? { path: relativePath, requestId: revealRequestId }
+                    ? { path: relativePath, requestId: activeReveal.requestId }
                     : null,
                 );
               }}
@@ -1484,6 +1539,9 @@ export default function FilePreviewPanel({
                 <EyeIcon className="size-3.5" />
               )}
             </FileSurfaceAction>
+          ) : null}
+          {sourceMarks.length > 0 ? (
+            <FileMarksMenu marks={sourceMarks} onSelect={jumpToMark} />
           ) : null}
           {showsRawText ? (
             <FileSurfaceAction
@@ -1613,8 +1671,8 @@ export default function FilePreviewPanel({
               name={relativePath}
               delimiter={renderTable ? tableDelimiter : null}
               workspaceMutationId={workspaceMutationId}
-              revealLine={revealLine}
-              revealRequestId={revealRequestId}
+              revealLine={activeReveal.line}
+              revealRequestId={activeReveal.requestId}
               wordWrap={wordWrap}
             />
           ) : relativePath &&
@@ -1707,7 +1765,7 @@ export default function FilePreviewPanel({
                   composerDraftTarget={composerDraftTarget}
                   contents={file.data.contents}
                   resolvedTheme={resolvedTheme}
-                  revealRequestId={revealRequestId}
+                  revealRequestId={activeReveal.requestId}
                   wordWrap={wordWrap}
                   onPostRender={onFilePostRender}
                   onPendingChange={onPendingChange}

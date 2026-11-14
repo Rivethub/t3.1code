@@ -128,6 +128,8 @@ export interface NativeReviewDiffViewProps extends ViewProps {
   /** Android ignores this and measures the widest row. */
   readonly contentWidth: number;
   readonly initialRowIndex?: number;
+  /** Bumps to re-apply `initialRowIndex` without clearing content. */
+  readonly initialRowScrollKey?: string;
   readonly initialFileId?: string;
   readonly scrollEnabled?: boolean;
   readonly bounces?: boolean;
@@ -331,7 +333,7 @@ function NativeReviewDiffContent(
     props.contentResetKey,
     onRowsFailure,
   );
-  useNativeReviewDiffPayload(nativeRef, "setTokensJson", tokensJson);
+  useNativeReviewDiffPayload(nativeRef, "setTokensJson", tokensJson, props.contentResetKey);
   const onDebugRef = useRef(onDebug);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- keeps the latest onDebug for callbacks the native diff view fires outside render
   useEffect(() => {
