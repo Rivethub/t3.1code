@@ -73,6 +73,17 @@ it.each(["blur", "Enter"] as const)(
   },
 );
 
+it("stops renaming without saving when the title input blurs", async () => {
+  persisted.title = "Original title";
+  await using screen = await render(header(persisted.title));
+  await screen.getByRole("button", { name: "Thread actions for Original title" }).dblClick();
+  const input = screen.getByRole("textbox", { name: "Thread title" });
+  await input.fill("Edited title");
+  await screen.getByText("Outside rename").click();
+  await expect.element(input).not.toBeInTheDocument();
+  expect(persisted.title).toBe("Original title");
+});
+
 it("opens the thread menu on a desktop title click without waiting", async () => {
   openMenu.mockClear();
   using _bridge = stubGlobal("desktopBridge", {});
