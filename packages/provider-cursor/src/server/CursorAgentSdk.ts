@@ -123,6 +123,7 @@ export interface CursorAgentSdkSession {
   readonly send: <Error>(
     input: CursorAgentSdkSendInput<Error>,
   ) => Effect.Effect<CursorAgentSdkRun, CursorAgentSdkRunnerError>;
+  readonly rollback: (runId: string | null) => Effect.Effect<void, CursorAgentSdkRunnerError>;
   readonly listMessages: Effect.Effect<ReadonlyArray<AgentMessage>, CursorAgentSdkRunnerError>;
   /** Context fill at the latest checkpoint, if Cursor saved one. Absent on test doubles. */
   readonly readContextUsage?: Effect.Effect<
@@ -730,6 +731,50 @@ export const makeCursorAgentSdkRunner = Effect.fn("makeCursorAgentSdkRunner")(fu
               ),
             ),
           } satisfies CursorAgentSdkRun;
+        }),
+        rollback: Effect.fn("CursorAgentSdkSession.rollback")(function* (runId) {
+          yield* Effect.tryPromise({
+            try: async () => {
+              const ownedStore =
+                input.options.local?.store === undefined
+                  ? await sdk.loadSqlite().SqliteLocalAgentStore.open({
+                      workspaceRef: storeCwd ?? cwd ?? process.cwd(),
+                    })
+                  : undefined;
+              const store = input.options.local?.store ?? ownedStore!;
+              try {
+                const document = await store.agents.get({ agentId: agent.agentId });
+                if (document === null) throw new Error("Cursor agent is unavailable for rollback.");
+                if (document.status === "running" || document.activeRunId != null)
+                  throw new Error("Cannot roll back an active Cursor agent.");
+                const run =
+                  runId === null ? null : await store.runs.get({ agentId: agent.agentId, runId });
+                if (
+                  runId !== null &&
+                  (run === null ||
+                    run.agentId !== agent.agentId ||
+                    run.status === "running" ||
+                    run.status === "queued" ||
+                    run.latestCheckpointRef == null)
+                )
+                  throw new Error("Cursor turn checkpoint is unavailable for rollback.");
+                const checkpoint = run?.latestCheckpointRef ?? null;
+                if (
+                  checkpoint !== null &&
+                  (await store.checkpoints.get({
+                    agentId: agent.agentId,
+                    blobId: checkpoint.rootBlobId,
+                  })) === null
+                )
+                  throw new Error("Cursor checkpoint blob is unavailable for rollback.");
+                agent.close();
+                await store.agents.update({ agent: { ...document, latestCheckpoint: checkpoint } });
+              } finally {
+                await ownedStore?.dispose();
+              }
+            },
+            catch: (cause) => runnerError(cause, "agent.rollback"),
+          });
         }),
         listMessages: log({
           direction: "outgoing",
