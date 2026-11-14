@@ -111,3 +111,61 @@ it("ignores a late action from a dialog that a newer one replaced", () => {
   expect(olderAction).toHaveBeenCalledOnce();
   expect(container.textContent).toContain("Newer");
 });
+
+it("cancels a confirm that a newer dialog replaced", async () => {
+  mountHost();
+  const onCancel = vi.fn();
+  const onConfirm = vi.fn();
+  act(() =>
+    Dialog.confirm({
+      title: "Close open pull requests?",
+      confirmText: "Close & Settle",
+      cancelText: "Settle",
+      onConfirm,
+      onCancel,
+    }),
+  );
+  act(() => Dialog.alert("Newer", undefined, [{ text: "OK" }]));
+
+  await act(async () => {
+    await Promise.resolve();
+  });
+
+  expect(onCancel).toHaveBeenCalledOnce();
+  expect(onConfirm).not.toHaveBeenCalled();
+});
+
+it("ignores stale confirm and cancel before and after replacement cancellation", async () => {
+  mountHost();
+  const onCancel = vi.fn();
+  const onConfirm = vi.fn();
+  act(() =>
+    Dialog.confirm({
+      title: "Remove project",
+      confirmText: "Remove project",
+      cancelText: "Cancel",
+      onConfirm,
+      onCancel,
+    }),
+  );
+  const staleCancel = renderedClicks.at(-2)!;
+  const staleConfirm = renderedClicks.at(-1)!;
+
+  act(() => Dialog.alert("Newer", undefined, [{ text: "OK" }]));
+  act(() => {
+    staleConfirm();
+    staleCancel();
+  });
+
+  await act(async () => {
+    await Promise.resolve();
+  });
+
+  act(() => {
+    staleConfirm();
+    staleCancel();
+  });
+
+  expect(onCancel).toHaveBeenCalledOnce();
+  expect(onConfirm).not.toHaveBeenCalled();
+});
