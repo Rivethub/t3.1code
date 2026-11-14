@@ -149,6 +149,12 @@ function resolveProjectOverrides(
     ) {
       continue;
     }
+    // Per-host pins: keep environment hosts the project did not set.
+    if (key === "githubHostAccounts" && value !== null && typeof value === "object") {
+      effective[key] = { ...settings.githubHostAccounts, ...value };
+      sources[key] = "project";
+      continue;
+    }
     // Clients resolve a hidden model to the catalog's first visible one, so a
     // hidden project default would silently pick a model nobody chose.
     // Custom models stay visible even when listed as hidden, as in the clients.

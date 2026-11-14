@@ -36,6 +36,7 @@ import {
   SettingsSection,
 } from "./settingsLayout";
 import { useScopedModelDisabledReason } from "./useScopedModelAvailability";
+import { ProjectGitHubAccountSettings } from "./ProjectGitHubAccountSettings";
 import {
   useScopedSettings,
   useScopedSettingsMixed,
@@ -415,6 +416,7 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
         </>
       ) : (
         <>
+          <ProjectGitHubAccountSettings />
           <SettingsRow
             serverScoped
             settingKeys={["defaultAutoPull"]}
