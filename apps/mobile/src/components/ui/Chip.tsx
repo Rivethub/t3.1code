@@ -35,18 +35,20 @@ export function Chip(props: {
       {props.icon ? (
         <SymbolView name={props.icon} size={15} tintColorClassName={iconColor} />
       ) : null}
-      <AppText
-        textRole={small ? "caption" : "footnote"}
-        numberOfLines={small ? undefined : 1}
-        className={cn(
-          "shrink",
-          !small && "max-w-[180px]",
-          !small && "font-t3-medium",
-          props.selected ? "text-primary-foreground" : "text-foreground-muted",
-        )}
-      >
-        {props.label}
-      </AppText>
+      {props.label ? (
+        <AppText
+          textRole={small ? "caption" : "footnote"}
+          numberOfLines={small ? undefined : 1}
+          className={cn(
+            "shrink",
+            !small && "max-w-[180px]",
+            !small && "font-t3-medium",
+            props.selected ? "text-primary-foreground" : "text-foreground-muted",
+          )}
+        >
+          {props.label}
+        </AppText>
+      ) : null}
       {props.trailingIcon ? (
         <SymbolView name={props.trailingIcon} size={11} tintColorClassName={iconColor} />
       ) : null}
@@ -72,19 +74,29 @@ export function Chip(props: {
         {content}
       </View>
     );
-  return props.onPress ? (
-    <Pressable
-      accessibilityRole="button"
-      accessibilityLabel={props.accessibilityLabel ?? props.label}
-      accessibilityState={{ selected: props.selected, disabled: Boolean(props.disabled) }}
-      disabled={props.disabled}
-      onPress={props.onPress}
-      hitSlop={6}
-      className={props.disabled ? "opacity-45" : "active:opacity-70"}
-    >
-      {body}
-    </Pressable>
-  ) : (
-    body
-  );
+  if (props.onPress) {
+    return (
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel={props.accessibilityLabel ?? props.label}
+        accessibilityState={{ selected: props.selected, disabled: Boolean(props.disabled) }}
+        disabled={props.disabled}
+        onPress={props.onPress}
+        hitSlop={6}
+        className={props.disabled ? "opacity-45" : "active:opacity-70"}
+      >
+        {body}
+      </Pressable>
+    );
+  }
+  // Non-interactive chips still need a place for accessibilityLabel; the glass/View
+  // body alone does not expose it to TalkBack or VoiceOver.
+  if (props.accessibilityLabel) {
+    return (
+      <View accessible accessibilityLabel={props.accessibilityLabel}>
+        {body}
+      </View>
+    );
+  }
+  return body;
 }
