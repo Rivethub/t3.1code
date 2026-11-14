@@ -1,8 +1,10 @@
+import { setPullRequestCheckoutPending } from "./pullRequestCheckoutState";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { scopeProjectRef } from "@t3tools/client-runtime/environment";
 import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
+  type AtomCommandResult,
 } from "@t3tools/client-runtime/state/runtime";
 import type {
   EnvironmentId,
@@ -13,6 +15,7 @@ import type {
   PullRequestRef,
   PullRequestSummary,
   ScopedThreadRef,
+  ThreadId,
 } from "@t3tools/contracts";
 import { useRef, useState } from "react";
 import {
@@ -258,6 +261,181 @@ export function writeHandoffToComposer(
   store.setReviewComments(target, next.reviewComments);
 }
 
+export type PullRequestCheckoutPrepared = {
+  readonly pullRequest: { readonly url: string };
+  readonly branch: string;
+  readonly worktreePath: string | null;
+  readonly isOnPullRequestHead: boolean;
+};
+
+type CheckoutHandoffOpened = { readonly draftId: DraftId; readonly threadId: ThreadId };
+
+const CHECKOUT_HANDOFF_TOAST_TIMEOUT_MS = 8_000;
+
+function finishCheckoutHandoffToast(
+  toastId: ReturnType<typeof toastManager.add>,
+  options: {
+    readonly type: "error" | "warning" | "success" | "info";
+    readonly title: string;
+    readonly description?: string;
+  },
+) {
+  // Base UI merges updates into the loading toast, so clear Cancel and restore a finite timeout.
+  toastManager.update(toastId, {
+    ...options,
+    timeout: CHECKOUT_HANDOFF_TOAST_TIMEOUT_MS,
+    actionProps: undefined,
+  });
+}
+
+/**
+ * Opens a thread, puts any task in its composer before checkout finishes, then prepares the
+ * branch. Cancel skips applying the checkout; the prompt stays in the composer.
+ */
+export async function runPullRequestCheckoutHandoff(input: {
+  readonly terminology: ChangeRequestTerminology;
+  readonly mode: "worktree" | "local";
+  readonly task: PullRequestThreadTask | null;
+  readonly openThread: () => Promise<CheckoutHandoffOpened | null>;
+  readonly prepare: (
+    threadId: ThreadId,
+  ) => Promise<AtomCommandResult<PullRequestCheckoutPrepared, unknown>>;
+  readonly pointThread: (
+    prepared: PullRequestCheckoutPrepared,
+    opened: CheckoutHandoffOpened,
+  ) => Promise<boolean>;
+  readonly clearHandoff: () => void;
+}): Promise<void> {
+  // Explicit timeouts survive toast updates and would pin the result after loading.
+  let cancelled = false;
+  let settled = false;
+  let pendingDraftId: DraftId | null = null;
+  const pendingOwner = Symbol();
+  const cancel = () => {
+    if (cancelled || settled) return;
+    cancelled = true;
+    // A local branch switch keeps running on the server, so send must wait for its result.
+    if (input.mode === "local" && pendingDraftId !== null) {
+      toastManager.update(toastId, {
+        type: "loading",
+        title: "Waiting for the local checkout",
+        description:
+          "The branch switch is already running. Sending stays blocked until it finishes.",
+        timeout: 0,
+        actionProps: undefined,
+      });
+      return;
+    }
+    // Unblock send immediately; finally clears again after prepare/point settle.
+    if (pendingDraftId !== null) setPullRequestCheckoutPending(pendingDraftId, false, pendingOwner);
+    input.clearHandoff();
+    finishCheckoutHandoffToast(toastId, {
+      type: "info",
+      title: "Stopped applying the checkout",
+      description:
+        input.task === null ? "The thread is still open." : "The prompt is still in the composer.",
+    });
+  };
+  const toastId = toastManager.add({
+    type: "loading",
+    title: `Preparing the ${input.terminology.singular} checkout...`,
+    timeout: 0,
+    actionProps: { children: "Cancel", onClick: cancel },
+    // Dismissing the loading toast cancels the same way as the Cancel action.
+    data: { hideCopyButton: true, onClose: cancel },
+  });
+
+  const opened = await input.openThread();
+  // Cancel promises the prompt stays in the composer, so seed even after a cancel during open.
+  if (opened !== null && input.task !== null) {
+    writeHandoffToComposer(opened.draftId, input.task);
+  }
+  if (cancelled) return;
+  if (opened === null) {
+    settled = true;
+    input.clearHandoff();
+    finishCheckoutHandoffToast(toastId, {
+      type: "error",
+      title: "Could not open a thread for the checkout",
+      description: "Try again from the project, or open a thread first.",
+    });
+    return;
+  }
+
+  pendingDraftId = opened.draftId;
+  setPullRequestCheckoutPending(opened.draftId, true, pendingOwner);
+  try {
+    const prepared = await input.prepare(opened.threadId);
+    if (cancelled && input.mode !== "local") return;
+    if (prepared._tag === "Failure") {
+      settled = true;
+      input.clearHandoff();
+      finishCheckoutHandoffToast(toastId, {
+        type: "error",
+        title: `Could not prepare the ${input.terminology.singular} checkout`,
+        description: checkoutFailureDescription(
+          isAtomCommandInterrupted(prepared) ? undefined : squashAtomCommandFailure(prepared),
+        ),
+      });
+      return;
+    }
+
+    if (cancelled) {
+      settled = true;
+      input.clearHandoff();
+      finishCheckoutHandoffToast(toastId, {
+        type: "info",
+        title: "Local checkout finished",
+        description: `This repository is now on \`${prepared.value.branch}\`. The thread is still open.`,
+      });
+      return;
+    }
+
+    const pointed = await input.pointThread(prepared.value, opened);
+    if (cancelled) return;
+    settled = true;
+    if (!pointed) {
+      input.clearHandoff();
+      finishCheckoutHandoffToast(toastId, {
+        type: "error",
+        title: "Checked out, but the thread stayed where it was",
+        description: `The checkout is ready on \`${prepared.value.branch}\`. Point a thread at it from the branch picker, then ask again.`,
+      });
+      return;
+    }
+
+    input.clearHandoff();
+    if (input.task === null) {
+      finishCheckoutHandoffToast(
+        toastId,
+        prepared.value.isOnPullRequestHead
+          ? {
+              type: "success",
+              title: input.mode === "local" ? "Checked out here" : "Checked out",
+              description:
+                input.mode === "local"
+                  ? `This repository is on the ${input.terminology.singular}'s branch, with a thread open on it.`
+                  : `The ${input.terminology.singular} is in its own worktree, with a thread open on it.`,
+            }
+          : offHeadPullRequestCheckoutToast(input.terminology),
+      );
+      return;
+    }
+    finishCheckoutHandoffToast(
+      toastId,
+      prepared.value.isOnPullRequestHead
+        ? {
+            type: "success",
+            title: "Checkout ready",
+            description: "The task is in the composer. Read it over, then send.",
+          }
+        : offHeadPullRequestCheckoutToast(input.terminology),
+    );
+  } finally {
+    setPullRequestCheckoutPending(opened.draftId, false, pendingOwner);
+  }
+}
+
 export type PullRequestHandoffDetail = Pick<
   PullRequestDetail,
   "projectId" | "workspaceRoot" | "url"
@@ -332,115 +510,37 @@ export function usePullRequestHandoffs({
   ) => {
     if (!detail || handoff !== null) return;
     setHandoff(kind);
-    // Dismissing the loading toast cancels the handoff before it touches a draft.
-    let cancelled = false;
-    // Explicit timeouts survive toast updates and would pin the result after loading.
-    const toastId = toastManager.add({
-      type: "loading",
-      title: `Preparing the ${terminology.singular} checkout...`,
-      data: {
-        onClose: () => {
-          cancelled = true;
-        },
-      },
-    });
     const projectRef = scopeProjectRef(environmentId, detail.projectId);
-    // Checkout setup requires the thread to exist first.
-    const opened = await newThread(projectRef).then(
-      (session) => session,
-      () => null,
-    );
-    if (cancelled) {
-      setHandoff(null);
-      return;
-    }
-    if (opened === null) {
-      setHandoff(null);
-      toastManager.update(toastId, {
-        type: "error",
-        title: "Could not open a thread for the checkout",
-        description: "Try again from the project, or open a thread first.",
-      });
-      return;
-    }
-    const prepared = await prepareThread.run({
-      reference: detail.url,
+    await runPullRequestCheckoutHandoff({
+      terminology,
       mode,
-      threadId: opened.threadId,
-    });
-    if (cancelled) {
-      setHandoff(null);
-      return;
-    }
-    if (prepared._tag === "Failure") {
-      setHandoff(null);
-      toastManager.update(toastId, {
-        type: "error",
-        title: `Could not prepare the ${terminology.singular} checkout`,
-        description: checkoutFailureDescription(
-          isAtomCommandInterrupted(prepared) ? undefined : squashAtomCommandFailure(prepared),
+      task,
+      clearHandoff: () => setHandoff(null),
+      // Checkout setup requires the thread to exist first.
+      openThread: () =>
+        newThread(projectRef).then(
+          (session) => session,
+          () => null,
         ),
-      });
-      return;
-    }
-    const pointed = await newThread(projectRef, {
-      branch: prepared.value.branch,
-      worktreePath: prepared.value.worktreePath,
-      envMode: prepared.value.worktreePath === null ? "local" : "worktree",
-    }).then(
-      (session) => session,
-      () => null,
-    );
-    if (cancelled) {
-      setHandoff(null);
-      return;
-    }
-    if (pointed === null) {
-      setHandoff(null);
-      toastManager.update(toastId, {
-        type: "error",
-        title: "Checked out, but the thread stayed where it was",
-        description: `The checkout is ready on \`${prepared.value.branch}\`. Point a thread at it from the branch picker, then ask again.`,
-      });
-      return;
-    }
-    // The draft carries the pull request until its first send makes it a thread, which links it.
-    useComposerDraftStore.getState().setDraftThreadContext(pointed.draftId, {
-      checkoutPullRequest: {
-        url: prepared.value.pullRequest.url,
-        branch: prepared.value.branch,
-      },
+      prepare: (threadId) =>
+        prepareThread.run({
+          reference: detail.url,
+          mode,
+          threadId,
+        }),
+      // Rebind the opened draft: newThread would open a second empty draft once the prompt is seeded.
+      pointThread: async (prepared, opened) =>
+        useComposerDraftStore.getState().setDraftThreadContext(opened.draftId, {
+          branch: prepared.branch,
+          worktreePath: prepared.worktreePath,
+          envMode: prepared.worktreePath === null ? "local" : "worktree",
+          // Draft carries the PR until its first send makes it a thread, which links it.
+          checkoutPullRequest: {
+            url: prepared.pullRequest.url,
+            branch: prepared.branch,
+          },
+        }),
     });
-    setHandoff(null);
-    if (task === null) {
-      toastManager.update(
-        toastId,
-        prepared.value.isOnPullRequestHead
-          ? {
-              type: "success",
-              title: mode === "local" ? "Checked out here" : "Checked out",
-              description:
-                mode === "local"
-                  ? `This repository is on the ${terminology.singular}'s branch, with a thread open on it.`
-                  : `The ${terminology.singular} is in its own worktree, with a thread open on it.`,
-            }
-          : offHeadPullRequestCheckoutToast(terminology),
-      );
-      return;
-    }
-    // The task goes on the checkout draft: if the user typed into `opened` while the
-    // checkout ran, that is no longer the draft the user is looking at.
-    await openThreadWithTask(projectRef, task, pointed);
-    toastManager.update(
-      toastId,
-      prepared.value.isOnPullRequestHead
-        ? {
-            type: "success",
-            title: "Checkout ready",
-            description: "The task is in the composer. Read it over, then send.",
-          }
-        : offHeadPullRequestCheckoutToast(terminology),
-    );
   };
 
   return { handoff, startAsk, startHandoff };
