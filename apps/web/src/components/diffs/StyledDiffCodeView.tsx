@@ -191,25 +191,33 @@ export const DIFF_VIEW_UNSAFE_CSS = `${DIFF_SURFACE_THEME_UNSAFE_CSS}
   color: color-mix(in srgb, var(--code-foreground) 84%, var(--primary)) !important;
 }
 
-/* Expanding a file mounts its body all at once; easing it in matches the 200ms the app's
-   collapsibles take. Appearance only: the viewer owns geometry, so height cannot animate.
-   Departing content cuts, the same one-way rule the pull request chrome fold follows. */
-[data-diff],
-[data-file] {
-  transition: opacity 200ms ease-out;
-}
-
-@starting-style {
+/* Expanding a file mounts its body all at once. Grow the body's layout height so the
+   open area itself expands and following files are pushed down with it. Clip during
+   the transition so lines are revealed by the growing box rather than painting into
+   a pre-opened gap. Timing matches the app's 200ms collapsibles. Departing content
+   cuts, the same one-way rule the pull request chrome fold follows. Unsupported
+   browsers keep the instant open. */
+@supports (interpolate-size: allow-keywords) {
   [data-diff],
   [data-file] {
-    opacity: 0;
+    interpolate-size: allow-keywords;
+    overflow: clip;
+    height: auto;
+    transition: height 200ms ease-out;
   }
-}
 
-@media (prefers-reduced-motion: reduce) {
-  [data-diff],
-  [data-file] {
-    transition: none;
+  @starting-style {
+    [data-diff],
+    [data-file] {
+      height: 0;
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    [data-diff],
+    [data-file] {
+      transition: none;
+    }
   }
 }
 `;
