@@ -319,7 +319,13 @@ export function PullRequestsScreen(
         ListHeaderComponentStyle={{ zIndex: 1 }}
         ListHeaderComponent={
           <>
-            <PullRequestListFilters sidebar={sidebar} filters={filters} />
+            <PullRequestListFilters
+              sidebar={sidebar}
+              filters={filters}
+              matchedCount={result.isPending && entries.length === 0 ? null : entries.length}
+              // hasMore means later pages may still match, even when this page is empty.
+              matchedIncomplete={result.hasMore}
+            />
             {result.data?.errors.length ? (
               <View key={JSON.stringify(targets)}>
                 {result.data.errors.map((error) => (
