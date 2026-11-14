@@ -88,3 +88,10 @@ it.each(["read", "write"] as const)(
     });
   },
 );
+it("opens files in an editor without losing a stored terminal preference", async () => {
+  state.allowed.add(primary);
+  state.getPreference.mockReturnValue("terminal");
+  const open = useOpenInPreferredEditor(primary, ["vscode", "terminal"]);
+  expect(await open("/work/readme.md:5")).toMatchObject({ _tag: "Success", value: "vscode" });
+  expect(state.setPreference).not.toHaveBeenCalled();
+});
