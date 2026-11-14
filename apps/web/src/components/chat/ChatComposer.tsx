@@ -1,5 +1,6 @@
 import { VoiceInputSetup } from "./VoiceInputSetup";
 import { useComposerTypingGuard } from "./useComposerTypingGuard";
+import { publishComposerTypingGuardActions } from "./composerTypingGuardActions";
 import { insertAttachmentReferencesForDraft } from "./composerAttachmentReferences";
 import type { ComposerAttachmentInsertion } from "../composerAttachmentInsertion";
 import { DESKTOP_PASTE_AS_TEXT_EVENT } from "../../lib/desktopPasteAsText";
@@ -238,7 +239,7 @@ import { observeResize } from "~/lib/observeResize";
 
 const isEnvironmentRequestInvalidError = Schema.is(EnvironmentRequestInvalidError);
 import { toastManager } from "../ui/toast";
-import { BuildingIcon, PlayIcon, ReplyIcon } from "lucide-react";
+import { BuildingIcon, PlayIcon, ReplyIcon, ShieldIcon } from "lucide-react";
 import { useNavigate } from "@tanstack/react-router";
 import { assistantCitationLabel } from "@t3tools/shared/assistantCitations";
 import { assistantCitationNavigation } from "../../lib/assistantCitationNavigation";
@@ -346,6 +347,9 @@ export interface ChatComposerHandle {
   };
   validateProviderInput: (providerInput: string) => boolean;
   setMultipleModelSelections: (selections: ReadonlyArray<ModelSelection>) => void;
+  /** Release approvals/questions the typing guard is holding so they take over the composer now. */
+  flushHeldRequests: () => void;
+  heldRequestCount: () => number;
 }
 
 export interface ChatComposerProps {
@@ -595,15 +599,29 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     onFocus: onTypingGuardFocus,
     onBlur: onTypingGuardBlur,
     onSend: onTypingGuardSend,
-  } = useComposerTypingGuard(composerDraftTargetKey, [
-    ...pendingApprovals.map((request) => request.requestId),
-    ...incomingPendingUserInputs.map((request) => request.requestId),
-  ]);
+    flushNow: flushHeldRequests,
+  } = useComposerTypingGuard(
+    composerDraftTargetKey,
+    [
+      ...pendingApprovals.map((request) => request.requestId),
+      ...incomingPendingUserInputs.map((request) => request.requestId),
+    ],
+    settings.composerTypingGuardEnabled,
+  );
+  const flushHeldRequestsStable = useStableCallback(flushHeldRequests);
   // A layout effect so the timeline never paints a held approval as answerable.
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- publishes held requests to the timeline without lifting per-keystroke typing state
   useLayoutEffect(() => {
     onHeldRequestIdsChange(heldRequestIds);
   }, [heldRequestIds, onHeldRequestIdsChange]);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- registers flush for the command palette without capturing the composer React ref there
+  useLayoutEffect(() => {
+    publishComposerTypingGuardActions({
+      heldCount: heldRequestIds.size,
+      flush: flushHeldRequestsStable,
+    });
+    return () => publishComposerTypingGuardActions(null);
+  }, [heldRequestIds, flushHeldRequestsStable]);
   const activePendingApproval =
     incomingPendingApproval && !heldRequestIds.has(incomingPendingApproval.requestId)
       ? incomingPendingApproval
@@ -2511,15 +2529,34 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         },
       ]
     : [];
-  const bannerItems: readonly ComposerBannerStackItem[] =
-    runtimeModeCeilingDenial === undefined || activePendingProgress
+  const heldRequestCount = heldRequestIds.size;
+  const typingGuardBannerItem: ComposerBannerStackItem | null =
+    heldRequestCount === 0
+      ? null
+      : {
+          id: "composer-typing-guard",
+          variant: "info",
+          group: "attention",
+          icon: <ShieldIcon />,
+          title:
+            heldRequestCount === 1
+              ? "Holding 1 request while you type"
+              : `Holding ${heldRequestCount} requests while you type`,
+          actions: (
+            <Button size="xs" variant="ghost" onClick={flushHeldRequestsStable}>
+              Show now
+            </Button>
+          ),
+        };
+  const bannerItems: readonly ComposerBannerStackItem[] = [
+    ...(runtimeModeCeilingDenial === undefined || activePendingProgress
       ? [...props.bannerItems, ...replyBannerItems]
       : [
           ...props.bannerItems,
           ...replyBannerItems,
           {
             id: "managed-runtime-mode",
-            variant: "warning",
+            variant: "warning" as const,
             icon: <BuildingIcon />,
             title: runtimeModeCeilingDenial,
             ...(runtimeModeCeilingFallback === undefined
@@ -2536,7 +2573,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                   ),
                 }),
           },
-        ];
+        ]),
+    ...(typingGuardBannerItem ? [typingGuardBannerItem] : []),
+  ];
   const shelfItems = hasBlockingComposerTopDrawer
     ? bannerItems.filter(
         (item) =>
@@ -3216,6 +3255,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         setProviderInputSubmissionError(validationMessage);
         return validationMessage === null;
       },
+      flushHeldRequests: flushHeldRequestsStable,
+      heldRequestCount: () => heldRequestIds.size,
     }),
     [
       activeThread,
@@ -3229,6 +3270,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       activePendingProgress,
       pendingApprovals,
       heldRequestIds,
+      flushHeldRequestsStable,
       composerTerminalContexts,
       insertComposerDraftTerminalContext,
       setComposerDraftReplyTo,
