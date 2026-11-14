@@ -58,6 +58,7 @@ import { WorkspaceListHeader } from "../layout/workspace/WorkspaceListHeader";
 import { WorkspaceSidebarColumn } from "../layout/workspace/WorkspaceSidebarColumn";
 import {
   ThreadListV2PendingRow,
+  ThreadListV2CaughtUpPlaceholder,
   ThreadListV2Row,
   ThreadListV2SettledShelfHeader,
   ThreadListV2ShowMoreRow,
@@ -485,6 +486,8 @@ function ThreadNavigationSidebarPane(props: ThreadNavigationSidebarProps) {
           />
         );
       }
+      case "v2-caught-up":
+        return <ThreadListV2CaughtUpPlaceholder pane="sidebar" />;
       case "v2-working-shelf":
         return (
           <ThreadListV2WorkingShelfHeader
@@ -609,7 +612,7 @@ function ThreadNavigationSidebarPane(props: ThreadNavigationSidebarProps) {
                 itemLayoutAnimation={THREAD_SIDEBAR_ROW_LAYOUT}
                 data={listItems}
                 drawDistance={500}
-                estimatedItemSize={64}
+                estimatedItemSize={104}
                 extraData={listExtraData}
                 getItemType={(item) => item.type}
                 itemsAreEqual={sidebarItemsAreEqual}
@@ -666,7 +669,7 @@ function ThreadNavigationSidebarPane(props: ThreadNavigationSidebarProps) {
                 itemLayoutAnimation={THREAD_SIDEBAR_ROW_LAYOUT}
                 data={listItems}
                 drawDistance={500}
-                estimatedItemSize={64}
+                estimatedItemSize={104}
                 extraData={listExtraData}
                 getItemType={(item) => item.type}
                 itemsAreEqual={sidebarItemsAreEqual}

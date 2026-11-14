@@ -378,6 +378,7 @@ export function PullRequestListFilters(props: {
     >
       {Platform.OS === "android" ? null : (
         <ListFilterMenu
+          glass={false}
           label={count ? String(count) : "Filters"}
           icon
           active={count > 0}
@@ -388,6 +389,7 @@ export function PullRequestListFilters(props: {
       )}
       {props.filters.environmentLabel !== null ? (
         <ListFilterMenu
+          glass={false}
           label={props.filters.environmentLabel}
           accessibilityLabel="Choose pull request environment"
           actions={props.filters.environmentActions}
@@ -395,6 +397,7 @@ export function PullRequestListFilters(props: {
         />
       ) : null}
       <ListFilterMenu
+        glass={false}
         label={STATES[props.filters.state]}
         active={props.filters.state !== "open"}
         accessibilityLabel="Filter by state"
@@ -402,6 +405,7 @@ export function PullRequestListFilters(props: {
         onSelect={select}
       />
       <ListFilterMenu
+        glass={false}
         label={INVOLVEMENT[props.filters.involvement]}
         active={props.filters.involvement !== "all"}
         accessibilityLabel="Filter by involvement"
@@ -409,6 +413,7 @@ export function PullRequestListFilters(props: {
         onSelect={select}
       />
       <ListFilterMenu
+        glass={false}
         label={selectedLabelCount ? `Labels ${selectedLabelCount}` : "Labels"}
         active={selectedLabelCount > 0}
         accessibilityLabel="Filter by label"
@@ -416,6 +421,7 @@ export function PullRequestListFilters(props: {
         onSelect={select}
       />
       <ListFilterMenu
+        glass={false}
         label={author === "me" ? "By you" : (author ?? "Author")}
         active={Boolean(author)}
         accessibilityLabel="Filter by author"
