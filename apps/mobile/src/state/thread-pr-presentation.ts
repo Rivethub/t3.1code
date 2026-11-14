@@ -128,6 +128,28 @@ export function resolveThreadPrBadgeAction(pr: ThreadPrPresentation) {
     : { kind: "open" as const, accessibilityLabel: `Open ${pr.accessibilityLabel}` };
 }
 
+/** The thread's open linked PR; unsynced links count only where the server syncs snapshots. */
+export function resolveThreadOpenLinkedPullRequest(
+  links: ReadonlyArray<ThreadPullRequestLink>,
+  supportsSnapshots: boolean,
+): ThreadPr | null {
+  const link = resolveThreadCurrentPullRequestLink(links);
+  const snapshot = link?.snapshot ?? null;
+  if (link === null || (snapshot === null ? !supportsSnapshots : snapshot.state !== "open")) {
+    return null;
+  }
+  return {
+    number: link.number,
+    title: snapshot?.title ?? `#${link.number}`,
+    url: link.url,
+    baseRef: snapshot?.baseBranch ?? "unknown",
+    headRef: snapshot?.headBranch ?? "unknown",
+    state: "open",
+    isDraft: snapshot?.isDraft === true,
+    updatedAt: snapshot?.updatedAt ?? null,
+  };
+}
+
 /** Records `value` as the newest entry, evicting the least recently answered beyond `limit`. */
 export function rememberBounded<V>(
   current: ReadonlyMap<string, V>,

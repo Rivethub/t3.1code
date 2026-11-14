@@ -4,6 +4,7 @@ import {
   SourceControlProviderKind,
   type ThreadPullRequestLink,
 } from "@t3tools/contracts";
+import { threadPullRequestsOf } from "@t3tools/client-runtime/thread-pull-requests";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
@@ -11,6 +12,7 @@ import {
   presentThreadLinkedPullRequests,
   rememberBounded,
   resolveThreadPrSource,
+  resolveThreadOpenLinkedPullRequest,
 } from "./thread-pr-presentation";
 
 function linkedPr(
@@ -173,5 +175,47 @@ describe("rememberBounded", () => {
       ["a", 3],
       ["c", 4],
     ]);
+  });
+});
+
+describe("resolveThreadOpenLinkedPullRequest", () => {
+  it("returns the linked open pull request", () => {
+    expect(resolveThreadOpenLinkedPullRequest([linkedPr(42)], true)).toMatchObject({
+      number: 42,
+      url: linkedPr(42).url,
+      state: "open",
+    });
+  });
+
+  it("treats a link waiting for its first sync as open", () => {
+    expect(
+      resolveThreadOpenLinkedPullRequest([linkedPr(42, { snapshot: null })], true),
+    ).toMatchObject({ number: 42, state: "open" });
+  });
+
+  it("ignores a legacy link whose state the server cannot report", () => {
+    const legacy = threadPullRequestsOf({
+      linkedPullRequest: {
+        projectId: ProjectId.make("project"),
+        repository: "t3tools/t3code",
+        number: 42,
+        url: linkedPr(42).url,
+      },
+    });
+    expect(resolveThreadOpenLinkedPullRequest(legacy, false)).toBeNull();
+  });
+
+  it("ignores links that are no longer open", () => {
+    const merged = linkedPr(42, { snapshot: { ...linkedPr(42).snapshot!, state: "merged" } });
+    const closed = linkedPr(43, { snapshot: { ...linkedPr(43).snapshot!, state: "closed" } });
+    expect(resolveThreadOpenLinkedPullRequest([merged, closed], true)).toBeNull();
+  });
+
+  it("prefers an open link over a merged one", () => {
+    const merged = linkedPr(41, {
+      linkedAt: "2026-09-10T00:00:00.000Z",
+      snapshot: { ...linkedPr(41).snapshot!, state: "merged" },
+    });
+    expect(resolveThreadOpenLinkedPullRequest([merged, linkedPr(42)], true)?.number).toBe(42);
   });
 });
