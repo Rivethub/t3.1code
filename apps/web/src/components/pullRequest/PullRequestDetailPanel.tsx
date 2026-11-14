@@ -1375,7 +1375,7 @@ export function PullRequestDetailPanel({
     />
   );
 
-  if (detailQuery.isPending && !detail) {
+  if (detailQuery.isPending && !detail && !detailQuery.error) {
     return (
       <PullRequestDetailGhost
         seed={matchingListEntry}

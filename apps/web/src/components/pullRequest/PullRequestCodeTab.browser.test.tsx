@@ -13,7 +13,8 @@ import "~/index.css";
 import { __setClientSettingsForTests } from "../../hooks/useSettings";
 import { DEFAULT_CLIENT_SETTINGS } from "@t3tools/contracts/settings";
 
-const { diffAtom, pagedDiffAtom } = await vi.hoisted(async () => {
+const { diffAtom, pagedDiffAtom, rateLimitedRetryAtom } = await vi.hoisted(async () => {
+  const Cause = await import("effect/Cause");
   const { AsyncResult, Atom } = await import("effect/reactivity");
   const filePatch = (path: string) =>
     [
@@ -53,11 +54,20 @@ const { diffAtom, pagedDiffAtom } = await vi.hoisted(async () => {
     pagedDiffAtom: Atom.family((cursor: string) =>
       Atom.make(() => AsyncResult.success(pages[cursor]!)),
     ),
+    rateLimitedRetryAtom: Atom.make(() =>
+      AsyncResult.failure(
+        Cause.fail(
+          new Error("github requests to github.com are paused until the rate limit resets."),
+        ),
+        { waiting: true },
+      ),
+    ),
   };
 });
 
 const mocks = vi.hoisted(() => ({
   paged: false,
+  rateLimitedRetry: false,
   diffCommits: [] as Array<string | undefined>,
   viewedPaths: null as ReadonlySet<string> | null,
   viewedListeners: new Set<() => void>(),
@@ -101,6 +111,7 @@ vi.mock(import("~/state/pullRequests"), async (original) => {
       ...actual.pullRequestEnvironment,
       diff: (({ input }: { input: { cursor?: string; commit?: string } }) => {
         mocks.diffCommits.push(input.commit);
+        if (mocks.rateLimitedRetry) return rateLimitedRetryAtom;
         return mocks.paged ? pagedDiffAtom(input.cursor ?? "first") : diffAtom;
       }) as never,
     },
@@ -162,10 +173,17 @@ const detail: PullRequestDetailView = {
   },
 };
 
-function setup({ paged }: { paged: boolean }) {
+function setup({
+  paged = false,
+  rateLimitedRetry = false,
+}: {
+  paged?: boolean;
+  rateLimitedRetry?: boolean;
+} = {}) {
   window.localStorage.removeItem("t3code.diffHideTestFiles");
   __setClientSettingsForTests(DEFAULT_CLIENT_SETTINGS);
   mocks.paged = paged;
+  mocks.rateLimitedRetry = rateLimitedRetry;
   mocks.diffCommits = [];
   mocks.viewedPaths = null;
   mocks.viewedListeners.clear();
@@ -205,6 +223,21 @@ it("keeps the diff after a refresh that brings back the same page", async () => 
     .element(screen.getByText("This pull request has no file changes."))
     .not.toBeInTheDocument();
   await expect.element(screen.getByText("1 file", { exact: true })).toBeVisible();
+});
+
+it("keeps the rate-limit error while a retry is still pending", async () => {
+  setup({ rateLimitedRetry: true });
+  const container = document.createElement("div");
+  container.className = "flex h-[700px] w-[900px]";
+  await using screen = await render(tab(0), { container });
+
+  await expect.element(screen.getByText("GitHub rate limit reached")).toBeVisible();
+  await expect
+    .element(screen.getByRole("status", { name: "Loading pull request diff..." }))
+    .not.toBeInTheDocument();
+  const retry = screen.getByRole("button", { name: "Trying…" });
+  await expect.element(retry).toBeVisible();
+  await expect.element(retry).toBeDisabled();
 });
 
 // regression: #13279 a Viewed answer that lands after a link reveals a file must not fold it
