@@ -11,6 +11,7 @@ import {
   useThreadGitMenuDefinition,
   type ThreadGitControlsProps,
 } from "./ThreadGitControls";
+import { useIdleThreadCount } from "./useIdleThreadCount";
 
 export function ThreadHeader(props: {
   readonly title: string;
@@ -23,6 +24,10 @@ export function ThreadHeader(props: {
   readonly onOpenFilesInspector: () => void;
 }) {
   const goBack = useWorkspaceBackNavigation();
+  const backCount = useIdleThreadCount({
+    environmentId: String(props.gitControls.environmentId),
+    threadId: String(props.gitControls.threadId),
+  });
   const { toggleAuxiliaryPane, startNewTask } = useAdaptiveWorkspaceLayout();
   const { panes } = useWorkspacePaneState();
   const gitMenu = useThreadGitMenuDefinition(props.gitControls);
@@ -47,6 +52,7 @@ export function ThreadHeader(props: {
       title={props.title}
       subtitle={props.subtitle}
       onBackToList={goBack}
+      backCount={backCount}
       onCompose={props.draft ? undefined : startNewTask}
       backInSplitView={
         props.onReturnToThread
