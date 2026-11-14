@@ -188,7 +188,8 @@ the intended remote with `git branch --set-upstream-to=<remote>/<branch>`.
 Choose how commit messages and pull request titles and descriptions are written in
 **Settings → Source control → Commits & pull requests**. **Repository conventions** uses the
 project's instructions and recent commit subjects. **Custom instructions** applies your own
-instructions to commits and pull requests.
+instructions to commits and pull requests. **Change request instructions** add preferences for
+generated titles and descriptions without changing that writing style; projects can override them.
 
 ## Review and merge
 
