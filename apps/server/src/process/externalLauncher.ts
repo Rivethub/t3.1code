@@ -1,6 +1,7 @@
 import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
 import * as NodePath from "@effect/platform-node/NodePath";
 import {
+  EDITOR_TARGET_WITH_POSITION_PATTERN,
   EDITORS,
   ExternalLauncherError,
   ExternalLauncherBrowserSpawnError,
@@ -51,6 +52,8 @@ interface EditorLaunch {
   readonly command: string;
   readonly args: ReadonlyArray<string>;
   readonly detached?: boolean;
+  /** Process cwd when args alone would not root the editor (Neovide <0.16 lacks `--chdir`). */
+  readonly cwd?: string;
 }
 
 interface ProcessLaunch {
@@ -67,7 +70,6 @@ interface TargetPathAndPosition {
 
 // cmd shims reparse %* after escaping is gone; newlines and quotes can expose shell operators.
 const WINDOWS_SHIM_UNSAFE_ARG_PATTERN = /[\u0000-\u001f\u007f"]/;
-const TARGET_WITH_POSITION_PATTERN = /^(.*?):(\d+)(?::(\d+))?$/;
 const POWERSHELL_ARGUMENTS_PREFIX = [
   "-NoProfile",
   "-NonInteractive",
@@ -125,7 +127,7 @@ const readBrowserLaunchEnv = BrowserLaunchEnvConfig.pipe(Effect.orElseSucceed(()
 const readCommandLookupEnv = CommandLookupEnvConfig.pipe(Effect.orElseSucceed(() => ({})));
 
 function parseTargetPathAndPosition(target: string): Option.Option<TargetPathAndPosition> {
-  const match = TARGET_WITH_POSITION_PATTERN.exec(target);
+  const match = EDITOR_TARGET_WITH_POSITION_PATTERN.exec(target);
   if (!match?.[1] || !match[2]) {
     return Option.none();
   }
@@ -138,7 +140,7 @@ function parseTargetPathAndPosition(target: string): Option.Option<TargetPathAnd
 }
 
 function resolveCommandEditorArgs(
-  editor: (typeof EDITORS)[number],
+  editor: Exclude<(typeof EDITORS)[number], { launchStyle: "terminal" }>,
   target: string,
   isDirectory: boolean,
   projectRoot: string | undefined,
@@ -167,6 +169,16 @@ function resolveCommandEditorArgs(
             onSome: (value) => ["--column", String(Math.max(0, Number(value) - 1))],
           }),
           path,
+        ],
+      });
+    case "neovim":
+      return Option.match(parsedTarget, {
+        // Folder opens set EditorLaunch.cwd; --chdir would break Neovide before 0.16.
+        onNone: () => [target],
+        onSome: ({ path, line, column }) => [
+          path,
+          "--",
+          `+call cursor(${line},${Option.getOrElse(column, () => "1")})`,
         ],
       });
   }
@@ -419,6 +431,9 @@ const buildAvailableEditors = Effect.fn("externalLauncher.buildAvailableEditors"
   const available: EditorId[] = [];
 
   for (const editor of EDITORS) {
+    // Clients type terminal editors into a POSIX shell; Windows shells quote differently.
+    if (editor.launchStyle === "terminal" && platform === "win32") continue;
+
     if (editor.commands === null) {
       if ((yield* resolveUsableFileManagerCommand(platform, env)) !== undefined) {
         available.push(editor.id);
@@ -489,6 +504,11 @@ const resolveEditorLaunch = Effect.fn("resolveEditorLaunch")(function* (
     return yield* new ExternalLauncherUnknownEditorError({ editor: input.editor });
   }
 
+  // Clients run these in the thread's terminal; a detached spawn has no TTY.
+  if (editorDef.launchStyle === "terminal") {
+    return yield* new ExternalLauncherUnsupportedEditorError({ editor: input.editor });
+  }
+
   if (editorDef.commands) {
     const resolved = yield* resolveEditorCommand(editorDef, env);
     if (Option.isNone(resolved)) {
@@ -499,7 +519,7 @@ const resolveEditorLaunch = Effect.fn("resolveEditorLaunch")(function* (
     }
     const { command, baseArgs } = resolved.value;
     const isDirectory =
-      editorDef.launchStyle === "goto" &&
+      (editorDef.launchStyle === "goto" || editorDef.launchStyle === "neovim") &&
       (yield* (yield* FileSystem.FileSystem).stat(input.cwd).pipe(
         Effect.map((info) => info.type === "Directory"),
         Effect.orElseSucceed(() => false),
@@ -512,6 +532,7 @@ const resolveEditorLaunch = Effect.fn("resolveEditorLaunch")(function* (
         ...baseArgs,
         ...resolveCommandEditorArgs(editorDef, input.cwd, isDirectory, input.projectRoot),
       ],
+      ...(isDirectory && editorDef.launchStyle === "neovim" ? { cwd: input.cwd } : {}),
     };
   }
 
@@ -865,6 +886,7 @@ const launchEditorProcess = Effect.fn("externalLauncher.launchEditorProcess")(fu
         stdin: "ignore",
         stdout: "ignore",
         stderr: "ignore",
+        ...(launch.cwd !== undefined ? { cwd: launch.cwd } : {}),
       },
     },
     (cause) =>
