@@ -21,6 +21,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { SheetHeader } from "../../components/ui/SheetHeader";
 import { AppText as Text } from "../../components/ui/AppText";
+import { SymbolView } from "../../components/ui/AppSymbol";
 import { environmentThreadDetails } from "../../state/threads";
 import { useEnvironments } from "../../state/environments";
 import { SubagentRow } from "./SubagentRow";
@@ -145,45 +146,57 @@ function AgentRow(props: {
     presentationById.has(id),
   );
 
-  const row = (
-    <View className="py-3.5">
-      <SubagentRow
-        environmentId={props.environmentId}
-        subagent={subagent}
-        canOpenRemote={target !== null}
-        elapsed={<AgentElapsed subagent={subagent} tickSeconds={props.tickSeconds} />}
-      />
-    </View>
+  const body = (
+    <SubagentRow
+      environmentId={props.environmentId}
+      subagent={subagent}
+      canOpenRemote={target !== null}
+      elapsed={<AgentElapsed subagent={subagent} tickSeconds={props.tickSeconds} />}
+    />
   );
-
-  const content =
-    target === null ? (
+  const stop = <SubagentStopButton environmentId={props.environmentId} subagent={subagent} />;
+  const chevron =
+    target === null ? null : (
       <View
-        accessible
-        className="min-w-0 flex-1"
-        accessibilityHint={
-          subagent.remoteChild === undefined
-            ? "Provider-managed agent. Its work appears in the transcript."
-            : `Runs on ${subagent.remoteChild.label}. Connect to it to open its thread.`
-        }
+        accessibilityElementsHidden
+        importantForAccessibility="no"
+        className="size-12 items-center justify-center"
       >
-        {row}
+        <SymbolView name="chevron.right" size={24} tintColorClassName="accent-icon-subtle" />
       </View>
-    ) : (
+    );
+
+  if (target === null) {
+    return (
+      <View className="flex-row items-center py-3.5">
+        <View
+          accessible
+          className="min-w-0 flex-1"
+          accessibilityHint={
+            subagent.remoteChild === undefined
+              ? "Provider-managed agent. Its work appears in the transcript."
+              : `Runs on ${subagent.remoteChild.label}. Connect to it to open its thread.`
+          }
+        >
+          {body}
+        </View>
+        {stop}
+      </View>
+    );
+  }
+
+  return (
+    <View className="flex-row items-center py-3.5">
       <Pressable
         accessibilityRole="link"
         accessibilityHint="Opens this agent's thread"
         onPress={() => props.onOpen(target)}
         className="min-w-0 flex-1 active:opacity-70"
       >
-        {row}
+        {body}
       </Pressable>
-    );
-
-  return (
-    <View className="flex-row items-center">
-      {content}
-      <SubagentStopButton environmentId={props.environmentId} subagent={subagent} />
+      {stop}
+      {chevron}
     </View>
   );
 }
