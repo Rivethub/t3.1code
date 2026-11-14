@@ -607,7 +607,7 @@ function itemSummary(
   toolPresentation: T3McpToolPresentation | null = null,
 ): string {
   if (item.type === "notification") return item.summary;
-  if (item.type === "system_notice") return item.message;
+  if (item.type === "system_notice") return item.title?.trim() || item.message;
   if (item.type === "compaction") return contextCompactionLabel(item);
   const title =
     (item.type === "dynamic_tool"
@@ -641,7 +641,7 @@ function itemSummary(
     case "error":
       return item.failure.class === "usage_limit" ? "Usage limit reached" : "Provider error";
     case "handoff":
-      return "Context handed off";
+      return item.title?.trim() || "Context handed off";
     case "fork":
       return "Thread forked";
     case "thread_created":

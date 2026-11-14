@@ -427,7 +427,10 @@ function projectedWorkEntry(row: OrchestrationV2ProjectedTurnItem): WorkLogEntry
     case "system_notice":
       return {
         ...common,
-        label: item.message,
+        label: title ?? item.message,
+        ...(title && item.message.trim().length > 0 && item.message.trim() !== title
+          ? { detail: item.message }
+          : {}),
         ...(item.level === "info" ? {} : { sourceActivityKind: "runtime.warning" }),
       };
     case "error": {
