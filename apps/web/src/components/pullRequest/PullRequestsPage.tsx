@@ -1530,6 +1530,7 @@ export function PullRequestsPage() {
             onAddTerminal={() => undefined}
             onAddDiff={() => undefined}
             onAddFiles={() => undefined}
+            onAddArtifacts={() => undefined}
             onAddPullRequest={() => undefined}
             onAddPullRequests={() => undefined}
             onAddDevice={() => undefined}
@@ -1537,6 +1538,7 @@ export function PullRequestsPage() {
             terminalAvailable={false}
             diffAvailable={false}
             filesAvailable={false}
+            artifactsAvailable={false}
             pullRequestAvailable={false}
             pullRequestsAvailable={false}
             deviceAvailable={false}

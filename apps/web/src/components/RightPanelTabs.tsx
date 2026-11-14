@@ -36,6 +36,7 @@ import { restrictToFirstScrollableAncestor, restrictToHorizontalAxis } from "@dn
 import { horizontalListSortingStrategy, SortableContext, useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import {
+  Box,
   Smartphone,
   ChevronDown,
   ChevronLeft,
@@ -140,6 +141,7 @@ export interface RightPanelTabsProps {
   onAddTerminal: () => void;
   onAddDiff: () => void;
   onAddFiles: () => void;
+  onAddArtifacts: () => void;
   onAddPullRequest: () => void;
   onAddPullRequests: () => void;
   onAddDevice: () => void;
@@ -149,6 +151,7 @@ export interface RightPanelTabsProps {
   terminalAvailable: boolean;
   diffAvailable: boolean;
   filesAvailable: boolean;
+  artifactsAvailable: boolean;
   pullRequestAvailable: boolean;
   pullRequestsAvailable: boolean;
   deviceAvailable: boolean;
@@ -177,6 +180,7 @@ const SURFACE_DISABLED_REASONS = {
   browser: "Browser previews are only available in the T3 Code desktop app.",
   terminal: "Terminal surfaces are only available from a project thread.",
   files: "Files are only available when a project is open.",
+  artifacts: "Artifacts are only available from a server thread.",
   diff: "Diff is only available for server threads in Git repositories.",
   pullRequest: "This thread's branch has no pull request yet.",
   pullRequests: "No linked pull requests are available for this thread.",
@@ -202,6 +206,7 @@ const SURFACE_UNAVAILABLE_HINTS = {
   browser: "Only available in the desktop app.",
   terminal: "Available when a project is open.",
   files: "Available when a project is open.",
+  artifacts: "Available from a server thread.",
   diff: "Available for Git repositories.",
   pullRequest: "No pull request on this branch yet.",
   pullRequests: "No linked pull requests available.",
@@ -321,6 +326,7 @@ function RightPanelEmptyState(props: {
   onAddTerminal: () => void;
   onAddDiff: () => void;
   onAddFiles: () => void;
+  onAddArtifacts: () => void;
   onAddPullRequest: () => void;
   onAddPullRequests: () => void;
   onAddDevice: () => void;
@@ -330,6 +336,7 @@ function RightPanelEmptyState(props: {
   terminalAvailable: boolean;
   diffAvailable: boolean;
   filesAvailable: boolean;
+  artifactsAvailable: boolean;
   pullRequestAvailable: boolean;
   pullRequestsAvailable: boolean;
   deviceAvailable: boolean;
@@ -362,6 +369,14 @@ function RightPanelEmptyState(props: {
       available: props.filesAvailable,
       disabledReason: SURFACE_UNAVAILABLE_HINTS.files,
       onClick: props.onAddFiles,
+    },
+    {
+      label: "Artifacts",
+      icon: Box,
+      shortcut: "A",
+      available: props.artifactsAvailable,
+      disabledReason: SURFACE_UNAVAILABLE_HINTS.artifacts,
+      onClick: props.onAddArtifacts,
     },
     {
       label: "Diff",
@@ -579,6 +594,8 @@ function surfaceTitle(
       return "Diff";
     case "files":
       return "Files";
+    case "artifacts":
+      return "Artifacts";
     case "file":
       return surface.relativePath.slice(
         Math.max(surface.relativePath.lastIndexOf("/"), surface.relativePath.lastIndexOf("\\")) + 1,
@@ -663,6 +680,8 @@ function SurfaceIcon({
       return <FileDiff className="size-3 shrink-0" />;
     case "files":
       return <Files className="size-3 shrink-0" />;
+    case "artifacts":
+      return <Box className="size-3 shrink-0" />;
     case "file":
       return (
         <PierreEntryIcon
@@ -1123,6 +1142,14 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
       onClick: props.onAddFiles,
     },
     {
+      label: "Artifacts",
+      icon: Box,
+      shortcut: "A",
+      available: props.artifactsAvailable,
+      disabledReason: SURFACE_DISABLED_REASONS.artifacts,
+      onClick: props.onAddArtifacts,
+    },
+    {
       label: "Diff",
       icon: FileDiff,
       shortcut: "D",
@@ -1548,6 +1575,7 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
             onAddTerminal={props.onAddTerminal}
             onAddDiff={props.onAddDiff}
             onAddFiles={props.onAddFiles}
+            onAddArtifacts={props.onAddArtifacts}
             onAddPullRequest={props.onAddPullRequest}
             onAddPullRequests={props.onAddPullRequests}
             onAddDevice={props.onAddDevice}
@@ -1556,6 +1584,7 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
             terminalAvailable={props.terminalAvailable}
             diffAvailable={props.diffAvailable}
             filesAvailable={props.filesAvailable}
+            artifactsAvailable={props.artifactsAvailable}
             pullRequestAvailable={props.pullRequestAvailable}
             pullRequestsAvailable={props.pullRequestsAvailable}
             deviceAvailable={props.deviceAvailable}
