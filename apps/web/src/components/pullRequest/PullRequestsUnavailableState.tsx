@@ -1,8 +1,14 @@
 import { RefreshIcon } from "~/components/ui/refresh-icon";
 import { ExternalLinkIcon } from "lucide-react";
 
+import { useNowAfter } from "../../hooks/useDeadline";
+import { usePrimarySettings } from "../../hooks/useSettings";
 import { Button } from "../ui/button";
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "../ui/empty";
+import {
+  describeSourceControlRateLimitError,
+  sourceControlRateLimitResumeDeadlineMs,
+} from "./pullRequestDiffError";
 import { PullRequestGlyph } from "./pullRequestIcons";
 
 export function PullRequestsUnavailableState({
@@ -18,6 +24,10 @@ export function PullRequestsUnavailableState({
   refreshing?: boolean;
   host?: { readonly url: string; readonly openLabel: string };
 }) {
+  const timestampFormat = usePrimarySettings((settings) => settings.timestampFormat);
+  const nowMs = useNowAfter(sourceControlRateLimitResumeDeadlineMs(error));
+  const description = describeSourceControlRateLimitError(error, timestampFormat, nowMs);
+
   return (
     <Empty className="scrollbar-gutter-both min-h-0 justify-center-safe overflow-y-auto [&>*]:shrink-0">
       <EmptyMedia variant="icon">
@@ -25,7 +35,7 @@ export function PullRequestsUnavailableState({
       </EmptyMedia>
       <EmptyHeader>
         <EmptyTitle>{title}</EmptyTitle>
-        <EmptyDescription>{error}</EmptyDescription>
+        <EmptyDescription>{description}</EmptyDescription>
       </EmptyHeader>
       {onRetry || host ? (
         <div className="flex flex-wrap justify-center gap-2">

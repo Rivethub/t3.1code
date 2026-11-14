@@ -77,8 +77,10 @@ import { pullRequestGroups, pullRequestListEntryId } from "./pullRequestListGrou
 import { PullRequestListEmptyState } from "./PullRequestListEmptyState";
 import { PullRequestListGhost } from "./PullRequestGhosts";
 import { type PullRequestRowTarget } from "./PullRequestRow";
+import { describeSourceControlRateLimitError } from "./pullRequestDiffError";
 import { PullRequestsUnavailableState } from "./PullRequestsUnavailableState";
 import { RightPanelTabs } from "../RightPanelTabs";
+import { usePrimarySettings } from "../../hooks/useSettings";
 import { isCommandPaletteOpen } from "~/commandPaletteBus";
 import { isElectron } from "~/env";
 import { resolveShortcutCommand, shortcutLabelForCommand } from "~/keybindings";
@@ -153,6 +155,7 @@ export function PullRequestsPage() {
   const statsPolicy: PullRequestStatsPolicy =
     sort === "ready" || sort === "largest" || sort === "smallest" ? "eager" : "visible";
   const navigate = useNavigate({ from: "/pull-requests" });
+  const timestampFormat = usePrimarySettings((settings) => settings.timestampFormat);
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
   const [hostReads, setHostReads] = useState<ReadonlyMap<EnvironmentId, PullRequestHostRead>>(
     () => new Map(),
@@ -1112,7 +1115,7 @@ export function PullRequestsPage() {
       (error) =>
         [
           pullRequestProjectKey({ id: error.projectId, environmentId: error.environmentId }),
-          error.message,
+          describeSourceControlRateLimitError(error.message, timestampFormat),
         ] as const,
     ),
   );
@@ -1177,7 +1180,7 @@ export function PullRequestsPage() {
     </div>
   );
   const listError = listQuery.error
-    ? `${environmentLabels.get(listQuery.error.environmentId) || "Environment"}: ${listQuery.error.message}`
+    ? `${environmentLabels.get(listQuery.error.environmentId) || "Environment"}: ${describeSourceControlRateLimitError(listQuery.error.message, timestampFormat)}`
     : null;
   const carriedToNothing =
     shownCount === 0 &&
@@ -1281,7 +1284,12 @@ export function PullRequestsPage() {
         Icon: getSourceControlPresentationForKind(entry.kind).Icon,
         ...(summary === undefined || summary.configured
           ? {}
-          : { unavailable: summary.detail ?? "This host could not be read." }),
+          : {
+              unavailable: describeSourceControlRateLimitError(
+                summary.detail ?? "This host could not be read.",
+                timestampFormat,
+              ),
+            }),
       };
     }),
   ];
