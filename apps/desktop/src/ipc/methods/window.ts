@@ -4,6 +4,7 @@ import {
   DesktopAppBrandingSchema,
   DesktopEnvironmentBootstrapSchema,
   DesktopMediaReadSchema,
+  DesktopOpenRemoteTerminalInputSchema,
   DesktopThemeSchema,
   EDITORS,
   EditorId,
@@ -15,6 +16,7 @@ import {
   type DesktopEnvironmentBootstrap,
   type PickedThemeFile,
 } from "@t3tools/contracts";
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import { PROJECT_FAVICON_EXTENSIONS } from "@t3tools/shared/projectFavicon";
 import { resolveEditorCommand } from "@t3tools/shared/editor";
 import * as HostProcess from "@t3tools/shared/HostProcess";
@@ -46,6 +48,7 @@ import * as MacPermissions from "../../permissions/MacPermissions.ts";
 import { safariPermissionCheck } from "../../preview/BrowserImport/SafariPermission.ts";
 import * as IpcChannels from "../channels.ts";
 import * as DesktopIpc from "../DesktopIpc.ts";
+import { openRemoteTerminal as launchRemoteTerminal } from "../../shell/openRemoteTerminal.ts";
 import {
   extractDistroFromUncPath,
   resolveWslPickFolderDefaultPath,
@@ -441,6 +444,16 @@ export const probeRemoteEditors = DesktopIpc.makeIpcMethod({
       }
     }
     return available;
+  }),
+});
+
+export const openRemoteTerminal = DesktopIpc.makeIpcMethod({
+  channel: IpcChannels.OPEN_REMOTE_TERMINAL_CHANNEL,
+  payload: DesktopOpenRemoteTerminalInputSchema,
+  result: Schema.Boolean,
+  handler: Effect.fn("desktop.ipc.window.openRemoteTerminal")(function* (input) {
+    // Own Node services so installing IPC handlers does not demand them at bootstrap.
+    return yield* launchRemoteTerminal(input).pipe(Effect.provide(NodeServices.layer));
   }),
 });
 
