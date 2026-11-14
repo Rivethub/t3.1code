@@ -203,6 +203,26 @@ describe("resolveThreadListV2Status", () => {
     expect(resolveThreadListV2Status({ ...guest, hasPendingApprovals: true })).toBe("approval");
   });
 
+  it("treats an outbox pending message as Pending, after attention requests", () => {
+    const thread = presentThreadShell(
+      environmentId,
+      decodeThreadShell(makeRawThreadShell({ status: "completed" })),
+    );
+    expect(resolveThreadListV2Status(thread, { hasQueuedMessages: true })).toBe("pending");
+    expect(
+      resolveThreadListV2Status(
+        { ...thread, hasPendingUserInput: true },
+        { hasQueuedMessages: true },
+      ),
+    ).toBe("input");
+    expect(
+      resolveThreadListV2Status(
+        { ...thread, pendingGuestMessageCount: 1 },
+        { hasQueuedMessages: true },
+      ),
+    ).toBe("request");
+  });
+
   it.each([
     { roster: "dev server", task: { kind: "command" }, status: "ready" },
     { roster: "dev server watchdog", task: { kind: "monitor" }, status: "ready" },
@@ -1606,6 +1626,7 @@ describe("buildThreadListV2ListItems row-state stamps", () => {
     const settledQueued = byKey(queued).get(`v2-thread:${environmentId}:stamp-settled`)!;
     const settledPlain = byKey(plain).get(`v2-thread:${environmentId}:stamp-settled`)!;
     expect(readyQueued.type === "v2-thread" && readyQueued.hasQueuedMessages).toBe(true);
+    expect(readyQueued.type === "v2-thread" && readyQueued.timeLabel).toBe("");
     expect(readyPlain.type === "v2-thread" && readyPlain.hasQueuedMessages).toBe(false);
     expect(threadListV2ListItemsAreEqual(readyQueued, readyPlain)).toBe(false);
     expect(threadListV2ListItemsAreEqual(settledQueued, settledPlain)).toBe(true);
@@ -1829,5 +1850,86 @@ describe("queued messages keep a settled thread active", () => {
       ["settled", "slim"],
     ]);
     expect(layout.settledCount).toBe(1);
+  });
+
+  it("counts a reconnect send as working when the Working shelf is on", () => {
+    const layout = buildThreadListV2Items({
+      threads: [
+        ...threads,
+        makeThread({ id: ThreadId.make("ready-queued"), title: "Ready with outbox" }),
+      ],
+      environmentId: null,
+      searchQuery: "",
+      now: NOW,
+      queuedThreadKeys: new Set([...queuedThreadKeys, `${environmentId}:ready-queued`]),
+      workingShelfEnabled: true,
+      workingShelfExpanded: true,
+    });
+    expect(layout.items.map((item) => [item.thread.id, item.variant] as const)).toEqual([
+      ["active", "card"],
+      ["ready-queued", "card"],
+      ["settled-queued", "card"],
+      ["settled", "slim"],
+    ]);
+    expect(layout.workingCount).toBe(2);
+    expect(layout.workingShelfHeaderIndex).toBe(1);
+    expect(layout.settledCount).toBe(1);
+  });
+
+  it("keeps a queued thread with an attention request in Active", () => {
+    const running = {
+      status: "running" as const,
+      activeRunId: null,
+      providerInstanceId: ProviderInstanceId.make("codex"),
+      providerName: "Codex",
+      lastError: null,
+      updatedAt: NOW,
+    };
+    const layout = buildThreadListV2Items({
+      threads: [
+        makeThread({
+          id: ThreadId.make("queued-approval"),
+          title: "Queued with approval",
+          hasPendingApprovals: true,
+        }),
+        makeThread({
+          id: ThreadId.make("queued-guest"),
+          title: "Queued with guest request",
+          runtime: running,
+          pendingGuestMessageCount: 1,
+        }),
+        makeThread({
+          id: ThreadId.make("queued-plan"),
+          title: "Queued with proposed plan",
+          interactionMode: "plan",
+          hasActionableProposedPlan: true,
+          latestRun: {
+            runId: RunId.make("queued-plan-run"),
+            status: "completed",
+            requestedAt: NOW,
+            startedAt: NOW,
+            completedAt: NOW,
+            assistantMessageId: null,
+          },
+        }),
+        makeThread({ id: ThreadId.make("ready-queued"), title: "Ready with outbox" }),
+      ],
+      environmentId: null,
+      searchQuery: "",
+      now: NOW,
+      queuedThreadKeys: new Set([
+        `${environmentId}:queued-approval`,
+        `${environmentId}:queued-guest`,
+        `${environmentId}:queued-plan`,
+        `${environmentId}:ready-queued`,
+      ]),
+      workingShelfEnabled: true,
+      workingShelfExpanded: true,
+    });
+    const ids = layout.items.map((item) => item.thread.id);
+    expect(ids.slice(0, 3).sort()).toEqual(["queued-approval", "queued-guest", "queued-plan"]);
+    expect(ids.slice(3)).toEqual(["ready-queued"]);
+    expect(layout.workingCount).toBe(1);
+    expect(layout.workingShelfHeaderIndex).toBe(3);
   });
 });
