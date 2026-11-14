@@ -117,6 +117,7 @@ interface SourceControlTextGenerationSettings {
   readonly modelSelection: ModelSelection;
   readonly projectId: ProjectId | null;
   readonly style: SourceControlWritingStyleSettings;
+  readonly changeRequestInstructions: string;
 }
 
 export class GitManager extends Context.Service<
@@ -467,6 +468,35 @@ function toPullRequestInfo(summary: ChangeRequest): PullRequestInfo {
 function limitContext(value: string, maxChars: number): string {
   if (value.length <= maxChars) return value;
   return `${value.slice(0, maxChars)}\n\n[truncated]`;
+}
+
+/** Matches `policyInstruction` in textGenerationPrompts; keep configured preferences inside that budget. */
+const CHANGE_REQUEST_INSTRUCTION_LIMIT = 20_000;
+const CHANGE_REQUEST_INSTRUCTION_TRUNCATION = "\n\n[truncated]";
+
+function combineChangeRequestInstructions(
+  styleInstructions: string | undefined,
+  extraInstructions: string,
+): string | undefined {
+  const extra = extraInstructions.trim();
+  const style = styleInstructions?.trim() ?? "";
+  const fitInstruction = (value: string) =>
+    value.length <= CHANGE_REQUEST_INSTRUCTION_LIMIT
+      ? value
+      : `${value.slice(0, CHANGE_REQUEST_INSTRUCTION_LIMIT - CHANGE_REQUEST_INSTRUCTION_TRUNCATION.length)}${CHANGE_REQUEST_INSTRUCTION_TRUNCATION}`;
+  if (!extra) return style ? fitInstruction(style) : undefined;
+
+  // Prefer keeping the configured preference; truncate style first, and the preference only if it alone overflows.
+  const keptExtra = fitInstruction(extra);
+  if (!style) return keptExtra;
+
+  const separator = "\n\n";
+  const styleBudget = CHANGE_REQUEST_INSTRUCTION_LIMIT - keptExtra.length - separator.length;
+  if (styleBudget <= 0) return keptExtra;
+  if (style.length <= styleBudget) return `${style}${separator}${keptExtra}`;
+  if (styleBudget <= CHANGE_REQUEST_INSTRUCTION_TRUNCATION.length) return keptExtra;
+  const keep = styleBudget - CHANGE_REQUEST_INSTRUCTION_TRUNCATION.length;
+  return `${style.slice(0, keep)}${CHANGE_REQUEST_INSTRUCTION_TRUNCATION}${separator}${keptExtra}`;
 }
 
 // Preserve command evidence when selectHistory drops oversized items; test verdicts are at the tail.
@@ -2429,7 +2459,15 @@ export const make = Effect.gen(function* () {
     });
     const baseRangeRef = yield* resolveBaseRangeRef(cwd, baseRef);
     const rangeContext = yield* gitCore.readRangeContext(cwd, baseRangeRef);
-    const policy = yield* resolveStylePolicy(cwd, settings);
+    const stylePolicy = yield* resolveStylePolicy(cwd, settings);
+    const changeRequestInstructions = combineChangeRequestInstructions(
+      stylePolicy.changeRequestInstructions,
+      settings.changeRequestInstructions,
+    );
+    const policy =
+      changeRequestInstructions === stylePolicy.changeRequestInstructions
+        ? stylePolicy
+        : { ...stylePolicy, changeRequestInstructions };
     const changeRequestTemplate =
       settings.style.followChangeRequestTemplates && provider.readChangeRequestTemplate
         ? Option.getOrUndefined(
@@ -2447,7 +2485,7 @@ export const make = Effect.gen(function* () {
       diffPatch: limitContext(rangeContext.diffPatch, 60_000),
       ...(changeRequestTemplate ? { changeRequestTemplate } : {}),
       ...(threadContext ? { threadContext } : {}),
-      ...(policy ? { policy } : {}),
+      policy,
       modelSelection: settings.modelSelection,
       projectId: settings.projectId,
     });
@@ -3482,6 +3520,7 @@ export const make = Effect.gen(function* () {
                   modelSelection: settings.textGenerationModelSelection,
                   projectId,
                   style: settings.sourceControlWritingStyle,
+                  changeRequestInstructions: settings.changeRequestInstructions,
                 })
               : providerRegistry.getProviders.pipe(
                   Effect.map((providers) => ({
@@ -3492,6 +3531,7 @@ export const make = Effect.gen(function* () {
                     ),
                     projectId,
                     style: settings.sourceControlWritingStyle,
+                    changeRequestInstructions: settings.changeRequestInstructions,
                   })),
                 ),
           ),
