@@ -1,8 +1,9 @@
 import DOMPurify from "dompurify";
-import type { DiagramType, MathResolver } from "pele/lazy";
+import type { DiagramType, MathResolver, Mounted } from "pele/lazy";
 import { use, useState } from "react";
 
 import { serializeCodeBlockToMarkdown } from "../../markdown-clipboard";
+import { observeResize } from "../../lib/observeResize";
 import { Button } from "../ui/button";
 
 type Pele = typeof import("pele/lazy");
@@ -219,6 +220,12 @@ function diagramImageUrl(svg: SVGSVGElement): string {
   return expandedImageUrl;
 }
 
+function diagramHostIsReady(container: HTMLElement) {
+  // Closed details, find-hidden panels, and height animations report 0 here.
+  // Pele's own update() defers in that case; initial mount does not, so wait.
+  return container.clientWidth > 0;
+}
+
 export function MermaidDiagram({
   source,
   onExpand,
@@ -227,8 +234,14 @@ export function MermaidDiagram({
   onExpand: (imageUrl: string) => void;
 }) {
   const [, setAttempt] = useState(0);
-  const [renderError, setRenderError] = useState<string | null>(null);
+  // Tied to the source that failed so a corrected fence is not stuck behind a
+  // hidden, zero-width mount host from the previous error.
+  const [renderError, setRenderError] = useState<{
+    readonly source: string;
+    readonly message: string;
+  } | null>(null);
   const trimmedSource = source.trim();
+  const activeError = renderError?.source === trimmedSource ? renderError.message : null;
   const core = use(loadCore());
   const type = core.status === "loaded" ? detectDiagramType(core.pele, trimmedSource) : null;
   const load = core.status === "loaded" && type ? use(loadDiagramType(core.pele, type)) : core;
@@ -237,20 +250,52 @@ export function MermaidDiagram({
   // Re-created, and so remounted, whenever the renderer, math support or source changes.
   const mountDiagram = (container: HTMLSpanElement) => {
     if (load.status !== "loaded") return;
-    const mounted = load.pele.mount(container, trimmedSource, {
-      links: false,
-      images: false,
-      zoom: false,
+
+    let mounted: Mounted | null = null;
+    let rendered = false;
+    let cancelled = false;
+
+    const mountOptions = {
+      links: false as const,
+      images: false as const,
+      zoom: false as const,
       // Keep the author's direction; a wide diagram scales down to fit instead of turning vertical.
-      autoDirection: false,
+      autoDirection: false as const,
       ...(math ? { math, sanitize: sanitizeMathDiagramSvg } : { sanitize: sanitizeDiagramSvg }),
-      onRender: () => setRenderError(null),
-      onError: (error) =>
-        setRenderError(
-          error instanceof Error ? error.message : "The diagram could not be rendered.",
-        ),
-    });
-    return () => mounted.destroy();
+      onRender: () => {
+        rendered = true;
+        setRenderError(null);
+      },
+      onError: (error: unknown) => {
+        // Pele already draws its own error chrome. Replacing a successful diagram — or one
+        // that only failed while its host was collapsed — sticks a permanent React error.
+        if (rendered || !diagramHostIsReady(container)) return;
+        setRenderError({
+          source: trimmedSource,
+          message: error instanceof Error ? error.message : "The diagram could not be rendered.",
+        });
+      },
+    };
+
+    const tryMount = () => {
+      if (cancelled || mounted || !diagramHostIsReady(container)) return;
+      mounted = load.pele.mount(container, trimmedSource, mountOptions);
+    };
+
+    // Collapsible open and find-reveal assign width after this ref runs; one frame
+    // later catches that, and resize covers later expands of a keep-mounted host.
+    const view = container.ownerDocument.defaultView;
+    const frame = view?.requestAnimationFrame(tryMount);
+    const host = container.parentElement;
+    const stopObserving = observeResize(host ? [container, host] : container, tryMount);
+    tryMount();
+
+    return () => {
+      cancelled = true;
+      if (frame !== undefined) view?.cancelAnimationFrame(frame);
+      stopObserving();
+      mounted?.destroy();
+    };
   };
 
   if (load.status === "failed") {
@@ -273,11 +318,11 @@ export function MermaidDiagram({
       data-markdown-mermaid=""
       data-markdown-copy={serializeCodeBlockToMarkdown(source, "mermaid")}
     >
-      {renderError ? <DiagramError message={renderError} source={source} /> : null}
+      {activeError ? <DiagramError message={activeError} source={source} /> : null}
       <button
         type="button"
         aria-label="Expand diagram"
-        hidden={renderError !== null}
+        hidden={activeError !== null}
         className="block w-full cursor-zoom-in rounded-md focus-visible:outline-2 focus-visible:outline-ring"
         onClick={(event) => {
           const svg = event.currentTarget.querySelector("svg");
