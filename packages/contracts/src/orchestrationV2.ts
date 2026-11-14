@@ -21,6 +21,7 @@ import {
   MessageId,
   EnvironmentId,
   NodeId,
+  ObservationItemId,
   ForwardCompatibleUnion,
   ForwardCompatibleUnionArray,
   hasUnknownUnionTag,
@@ -44,6 +45,7 @@ import {
 import { AuthMcpClientAccess } from "./auth.ts";
 import { ChatAttachment } from "./chatAttachment.ts";
 import { ThreadGuestShare } from "./guestShare.ts";
+import { ObservationItem } from "./observationStream.ts";
 import { StoredThreadTags, ThreadTag } from "./threadTags.ts";
 import { ThreadTitleRegenerationOutcome } from "./threadTitle.ts";
 import {
@@ -508,6 +510,10 @@ export const OrchestrationV2AppThread = Schema.Struct({
   lastSnoozeWakeAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
   limitRecovery: Schema.optional(Schema.NullOr(OrchestrationV2LimitRecovery)),
   guestShare: Schema.optional(Schema.NullOr(ThreadGuestShare)),
+  /** Absent on threads written before the observation stream existed; read as empty. */
+  observationItems: Schema.optional(Schema.Array(ObservationItem)),
+  /** Seats that opted into this thread's observation stream. Absent from older threads. */
+  observationStreamSubscribers: Schema.optional(Schema.Array(ThreadId)),
   pinnedAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
   autoSettleDisabledAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
   pinOrderKey: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
@@ -2006,6 +2012,7 @@ export const OrchestrationV2DomainEvent = Schema.Union([
       "thread.model-selection-updated",
       "thread.provider-switched",
       "thread.guest-share-updated",
+      "thread.observation-stream-updated",
     ]),
     payload: OrchestrationV2AppThread,
   }),
@@ -2231,6 +2238,8 @@ export const OrchestrationV2ThreadShell = Schema.Struct({
   pendingRuntimeRequest: Schema.NullOr(OrchestrationV2PendingRuntimeRequestSummary),
   /** Guest messages waiting for the owner to send or dismiss. Absent from older servers. */
   pendingGuestMessageCount: Schema.optional(NonNegativeInt),
+  /** Open observation-stream items (intake, not owned work). Absent from older servers. */
+  openObservationCount: Schema.optional(NonNegativeInt),
   latestVisibleMessage: Schema.NullOr(OrchestrationV2LatestVisibleMessageSummary),
   latestUserMessageAt: Schema.NullOr(Schema.DateTimeUtc),
   /** Excludes wakes and agent messages that advance latestUserMessageAt through the user role. */
@@ -2950,6 +2959,7 @@ export const OrchestrationV2DomainEventJson = Schema.Union([
       "thread.model-selection-updated",
       "thread.provider-switched",
       "thread.guest-share-updated",
+      "thread.observation-stream-updated",
     ]),
     payload: OrchestrationV2AppThreadJson,
   }),
@@ -3212,6 +3222,50 @@ export const OrchestrationV2Command = Schema.Union([
     threadId: ThreadId,
     tag: ThreadTag,
     tagged: Schema.Boolean,
+  }),
+  Schema.Struct({
+    type: Schema.Literal("observation.append"),
+    commandId: CommandId,
+    threadId: ThreadId,
+    itemId: ObservationItemId,
+    title: TrimmedNonEmptyString,
+    body: Schema.String,
+    createdByThreadId: ThreadId,
+  }),
+  Schema.Struct({
+    type: Schema.Literal("observation.subscribe"),
+    commandId: CommandId,
+    threadId: ThreadId,
+    subscriberThreadId: ThreadId,
+  }),
+  Schema.Struct({
+    type: Schema.Literal("observation.unsubscribe"),
+    commandId: CommandId,
+    threadId: ThreadId,
+    subscriberThreadId: ThreadId,
+  }),
+  Schema.Struct({
+    type: Schema.Literal("observation.link-work"),
+    commandId: CommandId,
+    threadId: ThreadId,
+    itemId: ObservationItemId,
+    linkedThreadId: ThreadId,
+    actorThreadId: ThreadId,
+  }),
+  Schema.Struct({
+    type: Schema.Literal("observation.decline"),
+    commandId: CommandId,
+    threadId: ThreadId,
+    itemId: ObservationItemId,
+    actorThreadId: ThreadId,
+  }),
+  Schema.Struct({
+    type: Schema.Literal("observation.duplicate"),
+    commandId: CommandId,
+    threadId: ThreadId,
+    itemId: ObservationItemId,
+    duplicateOfObservationId: ObservationItemId,
+    actorThreadId: ThreadId,
   }),
   Schema.Struct({
     type: Schema.Literal("thread.pin.reorder"),
