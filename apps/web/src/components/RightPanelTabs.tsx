@@ -37,6 +37,7 @@ import { horizontalListSortingStrategy, SortableContext, useSortable } from "@dn
 import { CSS } from "@dnd-kit/utilities";
 import {
   Smartphone,
+  ChartNoAxesGantt,
   ChevronDown,
   ChevronLeft,
   ChevronRight,
@@ -143,6 +144,7 @@ export interface RightPanelTabsProps {
   onAddPullRequest: () => void;
   onAddPullRequests: () => void;
   onAddDevice: () => void;
+  onAddInsights: () => void;
   /** Absent where side chats are not offered. */
   onAddSideChat?: (() => void) | undefined;
   browserAvailable: boolean;
@@ -152,6 +154,7 @@ export interface RightPanelTabsProps {
   pullRequestAvailable: boolean;
   pullRequestsAvailable: boolean;
   deviceAvailable: boolean;
+  insightsAvailable: boolean;
   sideChatAvailable?: boolean;
   /** Overrides the default reason while side chats are available but cannot start. */
   sideChatDisabledReason?: string | null;
@@ -181,6 +184,7 @@ const SURFACE_DISABLED_REASONS = {
   pullRequest: "This thread's branch has no pull request yet.",
   pullRequests: "No linked pull requests are available for this thread.",
   device: "Devices are only available from a thread.",
+  insights: "Insights are only available from a thread.",
   sideChat: "Side chats start after the first message.",
 } as const;
 
@@ -206,6 +210,7 @@ const SURFACE_UNAVAILABLE_HINTS = {
   pullRequest: "No pull request on this branch yet.",
   pullRequests: "No linked pull requests available.",
   device: "Available from a thread.",
+  insights: "Available from a thread.",
   sideChat: "Available after the first message.",
 } as const;
 
@@ -324,6 +329,7 @@ function RightPanelEmptyState(props: {
   onAddPullRequest: () => void;
   onAddPullRequests: () => void;
   onAddDevice: () => void;
+  onAddInsights: () => void;
   /** Absent where side chats are not offered. */
   onAddSideChat?: (() => void) | undefined;
   browserAvailable: boolean;
@@ -333,6 +339,7 @@ function RightPanelEmptyState(props: {
   pullRequestAvailable: boolean;
   pullRequestsAvailable: boolean;
   deviceAvailable: boolean;
+  insightsAvailable: boolean;
   sideChatAvailable: boolean;
   sideChatDisabledReason: string | null;
 }) {
@@ -370,6 +377,15 @@ function RightPanelEmptyState(props: {
       available: props.diffAvailable,
       disabledReason: SURFACE_UNAVAILABLE_HINTS.diff,
       onClick: props.onAddDiff,
+    },
+    {
+      label: "Insights",
+      description: "Per-turn timing waterfall for this thread.",
+      icon: ChartNoAxesGantt,
+      shortcut: "I",
+      available: props.insightsAvailable,
+      disabledReason: SURFACE_UNAVAILABLE_HINTS.insights,
+      onClick: props.onAddInsights,
     },
     {
       label: "Pull request",
@@ -577,6 +593,8 @@ function surfaceTitle(
   switch (surface.kind) {
     case "diff":
       return "Diff";
+    case "insights":
+      return "Insights";
     case "files":
       return "Files";
     case "file":
@@ -661,6 +679,8 @@ function SurfaceIcon({
       return <PreviewFavicon capturedUrl={previewCapturedUrl} url={previewUrl} />;
     case "diff":
       return <FileDiff className="size-3 shrink-0" />;
+    case "insights":
+      return <ChartNoAxesGantt className="size-3 shrink-0" />;
     case "files":
       return <Files className="size-3 shrink-0" />;
     case "file":
@@ -1131,6 +1151,14 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
       onClick: props.onAddDiff,
     },
     {
+      label: "Insights",
+      icon: ChartNoAxesGantt,
+      shortcut: "I",
+      available: props.insightsAvailable,
+      disabledReason: SURFACE_DISABLED_REASONS.insights,
+      onClick: props.onAddInsights,
+    },
+    {
       label: "Pull request",
       icon: PullRequestGlyph.pullRequest,
       shortcut: "P",
@@ -1551,6 +1579,7 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
             onAddPullRequest={props.onAddPullRequest}
             onAddPullRequests={props.onAddPullRequests}
             onAddDevice={props.onAddDevice}
+            onAddInsights={props.onAddInsights}
             onAddSideChat={props.onAddSideChat}
             browserAvailable={props.browserAvailable}
             terminalAvailable={props.terminalAvailable}
@@ -1559,6 +1588,7 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
             pullRequestAvailable={props.pullRequestAvailable}
             pullRequestsAvailable={props.pullRequestsAvailable}
             deviceAvailable={props.deviceAvailable}
+            insightsAvailable={props.insightsAvailable}
             sideChatAvailable={props.sideChatAvailable === true}
             sideChatDisabledReason={props.sideChatDisabledReason ?? null}
           />
