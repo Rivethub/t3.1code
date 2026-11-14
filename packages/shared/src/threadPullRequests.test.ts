@@ -1,0 +1,168 @@
+import type { ThreadPullRequestLink, ThreadPullRequestSnapshot } from "@t3tools/contracts";
+import { describe, expect, it } from "vite-plus/test";
+
+import {
+  isPullRequestIdentityQuery,
+  matchThreadSearchPullRequest,
+  parseThreadListPullRequestFilter,
+  threadMatchesPullRequestListFilters,
+  threadPullRequestMatchesIdentity,
+} from "./threadPullRequests.ts";
+
+function snapshot(input: Partial<ThreadPullRequestSnapshot> = {}): ThreadPullRequestSnapshot {
+  return {
+    state: "open",
+    title: "Change",
+    headBranch: "feature",
+    baseBranch: "main",
+    isDraft: false,
+    updatedAt: "2026-01-01T00:00:00.000Z",
+    syncedAt: "2026-01-01T00:00:00.000Z",
+    ...input,
+  };
+}
+
+function link(
+  number: number,
+  input: Partial<Omit<ThreadPullRequestLink, "number">> = {},
+): ThreadPullRequestLink {
+  return {
+    host: "github.com",
+    repository: "acme/app",
+    number,
+    url: `https://github.com/acme/app/pull/${number}`,
+    source: "manual",
+    linkedAt: "2026-01-01T00:00:00.000Z",
+    snapshot: snapshot(),
+    stack: null,
+    ...input,
+  };
+}
+
+describe("threadPullRequestMatchesIdentity", () => {
+  it("matches number, repository, and URL prefixes without cutting a longer number", () => {
+    const pr = link(22889);
+    expect(threadPullRequestMatchesIdentity(pr, { number: 22889 })).toBe(true);
+    expect(threadPullRequestMatchesIdentity(pr, { number: 2288 })).toBe(false);
+    expect(threadPullRequestMatchesIdentity(pr, { number: 22889, repository: "Acme/App" })).toBe(
+      true,
+    );
+    expect(threadPullRequestMatchesIdentity(pr, { number: 22889, repository: "other/app" })).toBe(
+      false,
+    );
+    expect(
+      threadPullRequestMatchesIdentity(pr, {
+        url: "https://github.com/acme/app/pull/22889/files",
+      }),
+    ).toBe(true);
+    expect(
+      threadPullRequestMatchesIdentity(pr, {
+        url: "https://github.com/acme/app/pull/2288",
+      }),
+    ).toBe(false);
+  });
+});
+
+describe("threadMatchesPullRequestListFilters", () => {
+  it("filters by state and identity; unsynced state never matches states", () => {
+    const open = link(1, { snapshot: snapshot({ state: "open" }) });
+    const merged = link(2, { snapshot: snapshot({ state: "merged" }) });
+    const unsynced = link(3, { snapshot: null });
+
+    expect(
+      threadMatchesPullRequestListFilters([open, merged], { pullRequestStates: ["open"] }),
+    ).toBe(true);
+    expect(threadMatchesPullRequestListFilters([merged], { pullRequestStates: ["open"] })).toBe(
+      false,
+    );
+    expect(threadMatchesPullRequestListFilters([unsynced], { pullRequestStates: ["open"] })).toBe(
+      false,
+    );
+
+    expect(
+      threadMatchesPullRequestListFilters([open, merged], { pullRequest: { number: 2 } }),
+    ).toBe(true);
+    expect(threadMatchesPullRequestListFilters([open], { pullRequest: { number: 2 } })).toBe(false);
+    expect(
+      threadMatchesPullRequestListFilters([open, merged], {
+        pullRequestStates: ["open"],
+        pullRequest: { number: 2 },
+      }),
+    ).toBe(false);
+  });
+});
+
+describe("parseThreadListPullRequestFilter", () => {
+  it("parses states, numbers, repo#n, and forge pull URLs", () => {
+    expect(parseThreadListPullRequestFilter("open")).toEqual({ pullRequestStates: ["open"] });
+    expect(parseThreadListPullRequestFilter("merged")).toEqual({ pullRequestStates: ["merged"] });
+    expect(parseThreadListPullRequestFilter("closed")).toEqual({ pullRequestStates: ["closed"] });
+    expect(parseThreadListPullRequestFilter("#22889")).toEqual({
+      pullRequest: { number: 22889 },
+    });
+    expect(parseThreadListPullRequestFilter("22889")).toEqual({
+      pullRequest: { number: 22889 },
+    });
+    expect(parseThreadListPullRequestFilter("acme/app#22889")).toEqual({
+      pullRequest: { repository: "acme/app", number: 22889 },
+    });
+    expect(
+      parseThreadListPullRequestFilter("https://github.com/acme/app/pull/22889/files"),
+    ).toEqual({
+      pullRequest: { url: "https://github.com/acme/app/pull/22889/files" },
+    });
+    expect(
+      parseThreadListPullRequestFilter("https://gitlab.com/acme/app/-/merge_requests/12"),
+    ).toEqual({
+      pullRequest: { url: "https://gitlab.com/acme/app/-/merge_requests/12" },
+    });
+    expect(
+      parseThreadListPullRequestFilter("https://dev.azure.com/acme/app/_git/app/pullrequest/9"),
+    ).toEqual({
+      pullRequest: { url: "https://dev.azure.com/acme/app/_git/app/pullrequest/9" },
+    });
+    expect(parseThreadListPullRequestFilter("open auth")).toBeNull();
+  });
+});
+
+describe("pull request identity search helpers", () => {
+  it("detects number, repo#n, and pull URL queries", () => {
+    expect(isPullRequestIdentityQuery("22889")).toBe(true);
+    expect(isPullRequestIdentityQuery("#22889")).toBe(true);
+    expect(isPullRequestIdentityQuery("pr 22889")).toBe(true);
+    expect(isPullRequestIdentityQuery("acme/app#22889")).toBe(true);
+    expect(isPullRequestIdentityQuery("https://github.com/acme/app/pull/22889")).toBe(true);
+    expect(isPullRequestIdentityQuery("https://gitlab.com/acme/app/-/merge_requests/12")).toBe(
+      true,
+    );
+    expect(
+      isPullRequestIdentityQuery("https://dev.azure.com/acme/app/_git/app/pullrequest/9"),
+    ).toBe(true);
+    expect(isPullRequestIdentityQuery("open auth")).toBe(false);
+    expect(isPullRequestIdentityQuery("why does /pull/12 fail")).toBe(false);
+  });
+
+  it("matches linked PRs by number and reference, not by title text", () => {
+    const pullRequests = [
+      {
+        number: 22889,
+        title: "Trim model lists",
+        references: ["acme/app#22889", "https://github.com/acme/app/pull/22889"],
+      },
+    ];
+    expect(matchThreadSearchPullRequest("22889", pullRequests)).toEqual({
+      number: 22889,
+      repository: "acme/app",
+      url: "https://github.com/acme/app/pull/22889",
+    });
+    expect(
+      matchThreadSearchPullRequest("https://github.com/acme/app/pull/22889/files", pullRequests),
+    ).toEqual({
+      number: 22889,
+      repository: "acme/app",
+      url: "https://github.com/acme/app/pull/22889",
+    });
+    expect(matchThreadSearchPullRequest("trim model", pullRequests)).toBeNull();
+    expect(matchThreadSearchPullRequest("2288", pullRequests)).toBeNull();
+  });
+});

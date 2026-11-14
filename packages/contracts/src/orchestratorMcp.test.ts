@@ -5,11 +5,13 @@ import {
   OrchestratorMcpDelegateTaskInput,
   OrchestratorMcpDelegateTaskResult,
   OrchestratorMcpThreadWaitResult,
+  OrchestratorMcpThreadListInput,
 } from "./orchestratorMcp.ts";
 
 const decodeDelegateTaskInput = Schema.decodeUnknownSync(OrchestratorMcpDelegateTaskInput);
 const decodeDelegateTaskResult = Schema.decodeUnknownSync(OrchestratorMcpDelegateTaskResult);
 const decodeThreadWaitResult = Schema.decodeUnknownSync(OrchestratorMcpThreadWaitResult);
+const decodeThreadListInput = Schema.decodeUnknownSync(OrchestratorMcpThreadListInput);
 
 describe("orchestrator MCP contracts", () => {
   it("decodes cross-provider delegated task requests and durable results", () => {
@@ -80,5 +82,17 @@ describe("orchestrator MCP contracts", () => {
         next,
       }).next,
     ).toBe(next);
+  });
+
+  it("decodes the pullRequest list filter string", () => {
+    expect(
+      decodeThreadListInput({
+        allProjects: true,
+        pullRequest: "open",
+      }),
+    ).toMatchObject({
+      allProjects: true,
+      pullRequest: "open",
+    });
   });
 });
