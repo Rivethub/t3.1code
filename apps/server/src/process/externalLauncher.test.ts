@@ -1313,3 +1313,116 @@ it.effect("starts a Windows command shim for unicode paths with cmd metacharacte
     );
   }),
 );
+
+// Windows drive letters cannot resolve the POSIX editor stub.
+it.effect.skipIf(windowsHost)("neovide roots folders and positions files", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const binDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-editor-neovide-" });
+    const executable = path.join(binDir, "neovide");
+    yield* fs.writeFileString(executable, "#!/bin/sh\n");
+    yield* fs.chmod(executable, 0o755);
+
+    const spawnFor = (cwd: string) =>
+      Effect.gen(function* () {
+        let spawned: ChildProcess.StandardCommand | undefined;
+        yield* Effect.gen(function* () {
+          const launcher = yield* ExternalLauncher.ExternalLauncher;
+          yield* launcher.launchEditor({ editor: "neovide", cwd });
+        }).pipe(
+          Effect.provide(
+            layerTest({
+              platform: "darwin",
+              env: { PATH: binDir },
+              onSpawn: (command) => {
+                spawned = command;
+              },
+            }),
+          ),
+        );
+        return spawned;
+      });
+
+    const folderSpawn = yield* spawnFor(binDir);
+    assert.deepEqual(folderSpawn?.args, [binDir]);
+    assert.equal(folderSpawn?.options.cwd, binDir);
+    const fileSpawn = yield* spawnFor(executable);
+    assert.deepEqual(fileSpawn?.args, [executable]);
+    assert.equal(fileSpawn?.options.cwd, undefined);
+    assert.deepEqual((yield* spawnFor(`${executable}:12`))?.args, [
+      executable,
+      "--",
+      "+call cursor(12,1)",
+    ]);
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+// Windows drive letters cannot resolve the POSIX editor stub.
+it.effect.skipIf(windowsHost)("neovim is offered on POSIX but never spawned by the server", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const binDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-editor-neovim-" });
+    const executable = path.join(binDir, "nvim");
+    yield* fs.writeFileString(executable, "#!/bin/sh\n");
+    yield* fs.chmod(executable, 0o755);
+
+    const editorsOn = (platform: NodeJS.Platform) =>
+      Effect.gen(function* () {
+        const launcher = yield* ExternalLauncher.ExternalLauncher;
+        return yield* launcher.resolveAvailableEditors();
+      }).pipe(Effect.provide(layerTest({ platform, env: { PATH: binDir } })));
+
+    assert.include(yield* editorsOn("linux"), "neovim");
+    assert.notInclude(yield* editorsOn("win32"), "neovim");
+
+    let spawned = false;
+    const exit = yield* Effect.gen(function* () {
+      const launcher = yield* ExternalLauncher.ExternalLauncher;
+      return yield* launcher.launchEditor({ editor: "neovim", cwd: "/workspace" });
+    }).pipe(
+      Effect.provide(
+        layerTest({
+          platform: "linux",
+          env: { PATH: binDir },
+          onSpawn: () => {
+            spawned = true;
+          },
+        }),
+      ),
+      Effect.exit,
+    );
+    assert.isTrue(Exit.isFailure(exit));
+    assert.isFalse(spawned);
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+it.effect("discovers Neovide from its Windows install directory", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const programFiles = yield* fs.makeTempDirectoryScoped({ prefix: "t3-neovide-win-" });
+    const executable = path.join(programFiles, "Neovide", "neovide.exe");
+    yield* fs.makeDirectory(path.dirname(executable), { recursive: true });
+    yield* fs.writeFileString(executable, "");
+    yield* fs.chmod(executable, 0o755);
+
+    const editors = yield* Effect.gen(function* () {
+      const launcher = yield* ExternalLauncher.ExternalLauncher;
+      return yield* launcher.resolveAvailableEditors();
+    }).pipe(
+      Effect.provide(
+        layerTest({
+          platform: "win32",
+          env: {
+            ProgramFiles: programFiles,
+            PATH: path.join(programFiles, "empty"),
+            PATHEXT: ".COM;.EXE;.BAT;.CMD",
+          },
+        }),
+      ),
+    );
+    assert.include(editors, "neovide");
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
