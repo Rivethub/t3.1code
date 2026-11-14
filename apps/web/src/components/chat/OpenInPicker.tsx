@@ -41,6 +41,7 @@ import {
   FinderIcon,
   Icon,
   KiroIcon,
+  TerminalAppIcon,
   TraeIcon,
   VisualStudioCode,
   VisualStudioCodeInsiders,
@@ -192,6 +193,11 @@ const resolveOpenInOptions = (platform: string, availableEditors: ReadonlyArray<
           : FolderClosedIcon,
       value: "file-manager",
       kind: isMacPlatform(platform) || isWindowsPlatform(platform) ? "brand" : "generic",
+    },
+    {
+      Icon: TerminalAppIcon,
+      value: "terminal",
+      kind: "brand",
     },
   ];
   const availableEditorSet = new Set(availableEditors);
