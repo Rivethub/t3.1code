@@ -314,13 +314,17 @@ function listedPullRequests(
   count: number,
   firstNumber: number,
   overrides?: (number: number) => Readonly<Record<string, unknown>>,
+  pageInfo: { readonly hasNextPage: boolean; readonly endCursor: string | null } = lastPage,
 ): string {
   return encodeJson({
     data: {
       repository: {
         pullRequests: {
-          pageInfo: lastPage,
-          nodes: rows(count, firstNumber, overrides),
+          pageInfo,
+          edges: rows(count, firstNumber, overrides).map((node, index) => ({
+            cursor: `edge-${firstNumber + index}`,
+            node,
+          })),
         },
       },
     },
@@ -2060,6 +2064,268 @@ layer("GitHubPullRequestApi.layer", (it) => {
       expect(batch.items.map((item) => item.number)).toEqual([1, 2]);
       expect(searchOfCall(1)).toBeUndefined();
       assert.isFalse(batch.continues);
+    }),
+  );
+
+  // regression: authored refresh kept closed rows and missed new ones when search lagged
+  it.effect("authored open lists skip search so a lagging index cannot keep closed rows", () =>
+    Effect.gen(function* () {
+      const author = (login: string) => ({
+        __typename: "User",
+        login,
+        name: null,
+        avatarUrl: "https://avatars.example/u",
+      });
+      mockedExecute.mockImplementation((call) =>
+        Effect.succeed(
+          call.kind === "graphql" && call.operationName === "PullRequestList"
+            ? output(
+                listedPullRequests(2, 1, (number) => ({
+                  author: author(number === 1 ? "bilal" : "other"),
+                })),
+              )
+            : // Stale search hit: a closed PR still indexed as open.
+              output(pullRequests(1, 99, () => ({ author: author("bilal") }))),
+        ),
+      );
+      const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
+
+      const batch = yield* cli.listPullRequests({
+        cwd: "/w",
+        repository: "acme/web",
+        host: "github.com",
+        state: "open",
+        involvement: "authored",
+        viewer: "bilal",
+        limit: 10,
+      });
+
+      expect(searchOfCall(0)).toBeUndefined();
+      expect(callAt(0)).toMatchObject({ kind: "graphql", operationName: "PullRequestList" });
+      expect(batch.items.map((item) => item.number)).toEqual([1]);
+      assert.isFalse(batch.continues);
+    }),
+  );
+
+  it.effect("a truncated authored listing still continues so Load more can page", () =>
+    Effect.gen(function* () {
+      const author = {
+        __typename: "User",
+        login: "bilal",
+        name: null,
+        avatarUrl: "https://avatars.example/u",
+      };
+      mockedExecute.mockReturnValueOnce(
+        Effect.succeed(
+          output(
+            listedPullRequests(11, 1, () => ({ author }), {
+              hasNextPage: true,
+              endCursor: "listing-next",
+            }),
+          ),
+        ),
+      );
+      const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
+
+      const batch = yield* cli.listPullRequests({
+        cwd: "/w",
+        repository: "acme/web",
+        host: "github.com",
+        state: "open",
+        involvement: "authored",
+        viewer: "bilal",
+        limit: 10,
+      });
+
+      expect(searchOfCall(0)).toBeUndefined();
+      expect(batch.items).toHaveLength(10);
+      assert.isTrue(batch.truncated);
+      assert.isTrue(batch.continues);
+      // Resume after the last returned match (edge-10), not the page end past the probe row.
+      expect(batch.resumeAfter).toBe("edge-10");
+    }),
+  );
+
+  it.effect("authored listing continuations stay on the creation-ordered listing", () =>
+    Effect.gen(function* () {
+      const author = {
+        __typename: "User",
+        login: "bilal",
+        name: null,
+        avatarUrl: "https://avatars.example/u",
+      };
+      mockedExecute.mockReturnValueOnce(
+        Effect.succeed(
+          output(
+            listedPullRequests(11, 20, () => ({ author }), {
+              hasNextPage: true,
+              endCursor: "listing-later",
+            }),
+          ),
+        ),
+      );
+      const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
+
+      const batch = yield* cli.listPullRequests({
+        cwd: "/w",
+        repository: "acme/web",
+        host: "github.com",
+        state: "open",
+        involvement: "authored",
+        viewer: "bilal",
+        limit: 10,
+        cursor: {
+          updatedBefore: "2026-07-02T00:00:00Z",
+          delivered: 10,
+          resumeAfter: "edge-10",
+        },
+      });
+
+      expect(searchOfCall(0)).toBeUndefined();
+      expect(callAt(0)).toMatchObject({
+        kind: "graphql",
+        operationName: "PullRequestList",
+      });
+      expect(varsAt(0)["after"]).toBe("edge-10");
+      expect(batch.items.map((item) => item.number)).toEqual([
+        20, 21, 22, 23, 24, 25, 26, 27, 28, 29,
+      ]);
+      assert.isTrue(batch.continues);
+      expect(batch.resumeAfter).toBe("edge-29");
+    }),
+  );
+
+  it.effect("authored listing pages cover every match without skips or repeats", () =>
+    Effect.gen(function* () {
+      const author = {
+        __typename: "User",
+        login: "bilal",
+        name: null,
+        avatarUrl: "https://avatars.example/u",
+      };
+      mockedExecute
+        .mockReturnValueOnce(
+          Effect.succeed(
+            output(
+              listedPullRequests(11, 1, () => ({ author }), {
+                hasNextPage: true,
+                endCursor: "page-end-1",
+              }),
+            ),
+          ),
+        )
+        .mockReturnValueOnce(
+          Effect.succeed(
+            output(
+              listedPullRequests(2, 11, () => ({ author }), {
+                hasNextPage: false,
+                endCursor: null,
+              }),
+            ),
+          ),
+        );
+      const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
+
+      const first = yield* cli.listPullRequests({
+        cwd: "/w",
+        repository: "acme/web",
+        host: "github.com",
+        state: "open",
+        involvement: "authored",
+        viewer: "bilal",
+        limit: 10,
+      });
+      const second = yield* cli.listPullRequests({
+        cwd: "/w",
+        repository: "acme/web",
+        host: "github.com",
+        state: "open",
+        involvement: "authored",
+        viewer: "bilal",
+        limit: 10,
+        cursor: {
+          updatedBefore: first.items.at(-1)?.updatedAt ?? "2026-07-02T00:00:00Z",
+          delivered: first.items.length,
+          resumeAfter: first.resumeAfter,
+        },
+      });
+
+      expect(varsAt(1)["after"]).toBe("edge-10");
+      expect([...first.items, ...second.items].map((item) => item.number)).toEqual([
+        1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12,
+      ]);
+      assert.isFalse(second.continues);
+    }),
+  );
+
+  it.effect("authored continuations without a listing cursor page through search", () =>
+    Effect.gen(function* () {
+      mockedExecute.mockReturnValueOnce(
+        Effect.succeed(
+          output(
+            pullRequests(1, 20, () => ({
+              author: {
+                __typename: "User",
+                login: "bilal",
+                name: null,
+                avatarUrl: "https://avatars.example/u",
+              },
+            })),
+          ),
+        ),
+      );
+      const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
+
+      const batch = yield* cli.listPullRequests({
+        cwd: "/w",
+        repository: "acme/web",
+        host: "github.com",
+        state: "open",
+        involvement: "authored",
+        viewer: "bilal",
+        limit: 10,
+        cursor: { updatedBefore: "2026-07-02T00:00:00Z", delivered: 10 },
+      });
+
+      expect(searchOfCall(0)).toBe(
+        "is:pr is:open author:bilal updated:<=2026-07-02T00:00:00Z sort:updated-desc repo:acme/web",
+      );
+      assert.isTrue(batch.continues);
+    }),
+  );
+
+  it.effect("authored text search still uses the search index", () =>
+    Effect.gen(function* () {
+      mockedExecute.mockReturnValueOnce(
+        Effect.succeed(
+          output(
+            pullRequests(1, 1, () => ({
+              author: {
+                __typename: "User",
+                login: "bilal",
+                name: null,
+                avatarUrl: "https://avatars.example/u",
+              },
+            })),
+          ),
+        ),
+      );
+      const cli = yield* GitHubPullRequestApi.GitHubPullRequestApi;
+
+      yield* cli.listPullRequests({
+        cwd: "/w",
+        repository: "acme/web",
+        host: "github.com",
+        state: "open",
+        involvement: "authored",
+        viewer: "bilal",
+        limit: 10,
+        query: "login banner",
+      });
+
+      expect(searchOfCall(0)).toBe(
+        'is:pr is:open author:bilal "login banner" sort:updated-desc repo:acme/web',
+      );
     }),
   );
 

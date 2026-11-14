@@ -389,6 +389,8 @@ const LIST_STATES: Record<PullRequestListState, ReadonlyArray<"OPEN" | "CLOSED" 
 
 interface GitHubPullRequestListPage {
   readonly items: ReadonlyArray<GitHubPullRequestListItem>;
+  /** Parallel to `items`; listing edges carry a cursor, search rows do not. */
+  readonly cursors: ReadonlyArray<string | null>;
   readonly rawCount: number;
   readonly endCursor: string | null;
 }
@@ -410,6 +412,8 @@ export interface GitHubPullRequestListBatch {
   readonly truncated: boolean;
   /** False for unsearchable pages returned in `gh` order. */
   readonly continues: boolean;
+  /** GraphQL `after` for the next authored listing page; survives across Load more. */
+  readonly resumeAfter?: string;
 }
 
 export interface GitHubPullRequestStat {
@@ -1842,6 +1846,7 @@ export const make = Effect.gen(function* () {
         page: ReturnType<typeof toPullRequestRows>,
       ): GitHubPullRequestListPage & { readonly pageInfo: GraphQLClient.PageInfo } => ({
         items: page.rows.map((row) => row.item),
+        cursors: page.rows.map((row) => row.cursor),
         rawCount: page.rawCount,
         endCursor: page.endCursor,
         pageInfo: { hasNextPage: page.endCursor !== null, endCursor: page.endCursor },
@@ -1856,21 +1861,28 @@ export const make = Effect.gen(function* () {
           after: string | null,
           rows: number,
         ) => Effect.Effect<GitHubPullRequestListPage, GitHubPullRequestApiError>,
+        startAfter: string | null = null,
       ) {
         const countRows = (pages: ReadonlyArray<GitHubPullRequestListPage>) =>
           pages.reduce((total, read) => total + read.rawCount, 0);
         const pages: GitHubPullRequestListPage[] = [];
         const seen = new Set<string>();
-        let after: string | null = null;
+        let after: string | null = startAfter;
         let truncated = false;
+        let endCursor: string | null = null;
         while (true) {
           const read: GitHubPullRequestListPage = yield* page(after, rows - countRows(pages));
           pages.push(read);
           const next = read.endCursor;
           if (next === null) break;
           // `truncated` also covers a cursor GitHub repeated before `rows` arrived.
-          if (seen.has(next) || countRows(pages) >= rows) {
+          if (seen.has(next)) {
             truncated = true;
+            break;
+          }
+          if (countRows(pages) >= rows) {
+            truncated = true;
+            endCursor = next;
             break;
           }
           seen.add(next);
@@ -1878,80 +1890,115 @@ export const make = Effect.gen(function* () {
         }
         return {
           items: pages.flatMap((read) => read.items),
+          cursors: pages.flatMap((read) => read.cursors),
           rawCount: countRows(pages),
           truncated,
+          endCursor,
         };
       });
       const stacks = input.host.toLowerCase() === "github.com";
       const read = (
         continues: boolean,
         requestedRows = input.limit + 1,
+        startAfter: string | null = null,
       ): Effect.Effect<GitHubPullRequestListBatch, GitHubPullRequestApiError> =>
-        collect(requestedRows, (after, rows) =>
-          (continues
-            ? client
-                .PullRequestSearch({
-                  q: query,
-                  first: pageRows(rows),
-                  after,
-                  // Stack badges come from their own batched read below, for the rows that stay.
-                  stacks: false,
-                  stats: true,
-                })
-                .pipe(Effect.map((result) => toPage(toPullRequestRows(result.search))))
-            : client
-                .PullRequestList({
-                  owner,
-                  name,
-                  states: LIST_STATES[input.state],
-                  first: pageRows(rows),
-                  after,
-                  stacks: false,
-                  stats: true,
-                })
-                .pipe(
-                  Effect.map((result) =>
-                    toPage(toPullRequestRows(result.repository?.pullRequests)),
-                  ),
-                )
-          ).pipe(graphql(target)),
+        collect(
+          requestedRows,
+          (after, rows) =>
+            (continues
+              ? client
+                  .PullRequestSearch({
+                    q: query,
+                    first: pageRows(rows),
+                    after,
+                    // Stack badges come from their own batched read below, for the rows that stay.
+                    stacks: false,
+                    stats: true,
+                  })
+                  .pipe(Effect.map((result) => toPage(toPullRequestRows(result.search))))
+              : client
+                  .PullRequestList({
+                    owner,
+                    name,
+                    states: LIST_STATES[input.state],
+                    first: pageRows(rows),
+                    after,
+                    stacks: false,
+                    stats: true,
+                  })
+                  .pipe(
+                    Effect.map((result) =>
+                      toPage(toPullRequestRows(result.repository?.pullRequests)),
+                    ),
+                  )
+            ).pipe(graphql(target)),
+          startAfter,
         ).pipe(
-          Effect.flatMap(({ items: rawItems, rawCount, truncated: cutShort }) => {
-            const items = continues
-              ? rawItems
-              : rawItems.filter((item) => matchesUnsortedListing(item, input));
-            if (
-              !continues &&
-              items.length < input.limit &&
-              rawCount >= requestedRows &&
-              requestedRows < fallbackMaxRows
-            ) {
-              const nextRows = Math.min(requestedRows * 2, fallbackMaxRows);
-              if (nextRows > requestedRows) return read(false, nextRows);
-            }
-            return Effect.succeed({
-              items: items.slice(0, input.limit),
-              // Probe one raw row past the limit; malformed rows must not prematurely end paging.
-              truncated:
+          Effect.flatMap(
+            ({
+              items: rawItems,
+              cursors: rawCursors,
+              rawCount,
+              truncated: cutShort,
+              endCursor,
+            }) => {
+              const matched = continues
+                ? rawItems.map((item, index) => ({
+                    item,
+                    cursor: rawCursors[index] ?? null,
+                  }))
+                : rawItems.flatMap((item, index) =>
+                    matchesUnsortedListing(item, input)
+                      ? [{ item, cursor: rawCursors[index] ?? null }]
+                      : [],
+                  );
+              if (
+                !continues &&
+                matched.length < input.limit &&
+                rawCount >= requestedRows &&
+                requestedRows < fallbackMaxRows
+              ) {
+                const nextRows = Math.min(requestedRows * 2, fallbackMaxRows);
+                if (nextRows > requestedRows) return read(false, nextRows, startAfter);
+              }
+              const truncated =
                 cutShort ||
                 (continues
                   ? rawCount > input.limit
-                  : items.length > input.limit || rawCount >= requestedRows),
-              continues,
-            });
-          }),
+                  : matched.length > input.limit || rawCount >= requestedRows);
+              const delivered = matched.slice(0, input.limit);
+              // Overflow keeps the last returned row's edge cursor so Load more does not skip the
+              // matches left in this window; a short page advances with the connection endCursor.
+              const resumeAfter =
+                !continues && truncated
+                  ? matched.length > input.limit
+                    ? (delivered.at(-1)?.cursor ?? endCursor)
+                    : endCursor
+                  : null;
+              return Effect.succeed({
+                items: delivered.map((row) => row.item),
+                // Probe one raw row past the limit; malformed rows must not prematurely end paging.
+                truncated,
+                continues,
+                ...(resumeAfter !== null ? { resumeAfter } : {}),
+              });
+            },
+          ),
         );
-      // Unindexed repositories silently return no search rows; fall back to the repository listing.
+      // Unindexed repos fall back to listing. Authored pages stay on listing (creation order;
+      // search lags and pages by update time). Empty first windows and text search still search.
       const hasQuery = (input.query?.trim().length ?? 0) > 0;
-      const listed = read(true).pipe(
-        Effect.filterOrElse(
-          (batch) => batch.items.length > 0 || input.cursor !== undefined || hasQuery,
-          () => read(false),
-        ),
-        Effect.filterOrElse(
-          (batch) => !stacks || batch.items.length === 0,
-          (batch) =>
-            Effect.forEach(
+      const listingAfter = input.cursor?.resumeAfter ?? null;
+      const preferListing =
+        input.involvement === "authored" &&
+        !hasQuery &&
+        (input.cursor === undefined || listingAfter !== null);
+      const withStacks = (
+        batch: GitHubPullRequestListBatch,
+      ): Effect.Effect<GitHubPullRequestListBatch, GitHubPullRequestApiError> =>
+        !stacks || batch.items.length === 0
+          ? Effect.succeed(batch)
+          : Effect.forEach(
               batch.items,
               (item) => {
                 const lookup = pullRequestLookup({
@@ -1981,9 +2028,31 @@ export const make = Effect.gen(function* () {
                 operation: "listPullRequestStackMemberships",
               }),
               Effect.map((items) => ({ ...batch, items })),
-            ),
+            );
+      const authoredListing = read(false, input.limit + 1, listingAfter).pipe(
+        Effect.flatMap((batch) =>
+          // An empty truncated first window found no authored rows among the newest-created;
+          // search may still have them. A filled truncated page keeps the listing rows and
+          // hands its GraphQL cursor back so Load more stays on creation order.
+          batch.truncated && batch.items.length === 0 && listingAfter === null
+            ? read(true)
+            : Effect.succeed(
+                batch.truncated && batch.resumeAfter !== undefined
+                  ? { ...batch, continues: true }
+                  : batch,
+              ),
         ),
       );
+      const listed = (
+        preferListing
+          ? authoredListing
+          : read(true).pipe(
+              Effect.filterOrElse(
+                (batch) => batch.items.length > 0 || input.cursor !== undefined || hasQuery,
+                () => read(false),
+              ),
+            )
+      ).pipe(Effect.flatMap(withStacks));
       // GitHub answers a private repository the token cannot see as missing, and its error names
       // the credential that request carried. A personal credential is pinned for the whole
       // read, so a token changed mid-read does not split it; the app keeps the policy's fallback.
