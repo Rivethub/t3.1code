@@ -245,7 +245,8 @@ their original values.
 For provider-specific setup and accounts, see [Codex](./providers-codex.md),
 [Claude](./providers-claude.md), [OpenCode](./providers-opencode.md),
 [Antigravity](./providers-antigravity.md), [Kiro](./providers-kiro.md),
-[Pi](./providers-pi.md), [Muse Code](./providers-muse.md), and [fx](./providers-fx.md).
+[OpenRig](./providers-openrig.md), [Pi](./providers-pi.md), [Muse Code](./providers-muse.md),
+and [fx](./providers-fx.md).
 
 ### Provider check timeouts
 
