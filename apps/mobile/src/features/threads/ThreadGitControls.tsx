@@ -1,6 +1,7 @@
 import * as Dialog from "../../components/ui/Dialog";
 import { useOpenPullRequest } from "../../native/useOpenPullRequest";
-import type { AppBarMenu } from "../../components/ui/AppBar.types";
+import type { AppBarConfirm, AppBarMenu } from "../../components/ui/AppBar.types";
+import type { AppSymbolName } from "../../components/ui/AppSymbol";
 import {
   AuthSourceControlWriteScope,
   EnvironmentId,
@@ -18,6 +19,7 @@ import { useNavigation } from "@react-navigation/native";
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 
 import { useEnvironmentScope } from "../../state/session";
+import type { ThreadPrPresentation } from "../../state/thread-pr-presentation";
 import { PullRequestGlyph } from "../pull-requests/pullRequestGlyphs";
 import {
   basename,
@@ -26,6 +28,7 @@ import {
   type TerminalMenuSession,
 } from "../terminal/terminalMenu";
 import { projectScriptMenuLabel } from "@t3tools/shared/projectScripts";
+import { linkedPrBarConfirm, shortGitBarLabel } from "./threadGitBarPrimary";
 
 function truncateMiddle(value: string, maxLength: number): string {
   if (value.length <= maxLength) {
@@ -71,12 +74,6 @@ function compactMenuStatus(gitStatus: VcsStatusResult | null): string {
   return parts.join(" · ");
 }
 
-type QuickActionIcon =
-  | "arrow.down.circle"
-  | "arrow.up.right.circle"
-  | "checkmark.circle"
-  | "arrow.up.circle";
-
 export type ThreadGitMenuProps = {
   readonly environmentId: EnvironmentId | string;
   readonly threadId: ThreadId | string;
@@ -84,6 +81,9 @@ export type ThreadGitMenuProps = {
   readonly hasThread?: boolean;
   readonly gitStatus: VcsStatusResult | null;
   readonly gitOperationLabel: string | null;
+  /** Linked / branch PR badge for the thread bar — wins over the git quick-action pill. */
+  readonly linkedPr?: ThreadPrPresentation | null;
+  readonly onOpenLinkedPr?: () => void;
   readonly onOpenFilesInspector?: () => void;
   readonly onOpenGitInspector?: () => void;
   readonly onMergeBack?: () => void;
@@ -142,15 +142,18 @@ function useThreadGitControlModel(props: ThreadGitMenuProps) {
     ? (quickAction.hint ?? "This action is unavailable.")
     : null;
 
-  const quickActionIcon: QuickActionIcon = (() => {
+  const quickActionIcon: Extract<AppSymbolName, string> = (() => {
     if (quickAction.kind === "run_pull") return "arrow.down.circle";
-    if (quickAction.kind === "open_pr") return "arrow.up.right.circle";
+    if (quickAction.kind === "open_pr") return PullRequestGlyph.pullRequest;
     if (quickAction.kind === "run_action") {
       if (quickAction.action === "commit") return "checkmark.circle";
       if (quickAction.action === "push" || quickAction.action === "commit_push")
         return "arrow.up.circle";
+      if (quickAction.action === "create_pr" || quickAction.action === "commit_push_pr") {
+        return PullRequestGlyph.pullRequest;
+      }
     }
-    return "arrow.up.right.circle";
+    return PullRequestGlyph.pullRequest;
   })();
 
   const openExistingPr = async () => {
@@ -301,9 +304,11 @@ export function threadTerminalMenu(props: ThreadGitControlsProps): AppBarMenu | 
   };
 }
 
-/** The thread's git menu, shared by the thread bar and Review. */
-export function useThreadGitMenuDefinition(props: ThreadGitMenuProps): AppBarMenu | null {
-  const model = useThreadGitControlModel(props);
+function threadGitMenuFromModel(
+  props: ThreadGitMenuProps,
+  model: ReturnType<typeof useThreadGitControlModel>,
+  omitQuickAction: boolean,
+): AppBarMenu {
   return {
     title: "Git controls",
     icon: "point.topleft.down.curvedto.point.bottomright.up",
@@ -317,16 +322,20 @@ export function useThreadGitMenuDefinition(props: ThreadGitMenuProps): AppBarMen
         subtitle: compactMenuStatus(props.gitStatus),
         onPress: () => {},
       },
-      {
-        id: "git-quick-action",
-        title: model.quickAction.label,
-        icon: model.quickActionIcon,
-        disabled: model.quickAction.disabled,
-        subtitle: model.quickActionHint ?? undefined,
-        onPress: () => {
-          void model.runQuickAction();
-        },
-      },
+      ...(omitQuickAction
+        ? []
+        : [
+            {
+              id: "git-quick-action",
+              title: model.quickAction.label,
+              icon: model.quickActionIcon,
+              disabled: model.quickAction.disabled,
+              subtitle: model.quickActionHint ?? undefined,
+              onPress: () => {
+                void model.runQuickAction();
+              },
+            },
+          ]),
       {
         id: "git-review",
         title: "Review changes",
@@ -362,4 +371,60 @@ export function useThreadGitMenuDefinition(props: ThreadGitMenuProps): AppBarMen
       },
     ],
   };
+}
+
+/**
+ * Thread-bar git controls: a compact one-tap pill for the next git step, plus the overflow
+ * menu for everything else (review, more). A linked PR wins the pill so tap opens it (or the
+ * multi-PR list) and long-press still reaches Push / Commit / … .
+ */
+export function useThreadGitBar(props: ThreadGitMenuProps): {
+  readonly primaryAction: AppBarConfirm | null;
+  readonly menu: AppBarMenu;
+} {
+  const model = useThreadGitControlModel(props);
+  const terminology = sourceControlClients.get(
+    props.gitStatus?.sourceControlProvider?.kind,
+  ).changeRequest;
+  const linkedPr = props.linkedPr ?? null;
+  const linkedPrimary: AppBarConfirm | null =
+    linkedPr && props.onOpenLinkedPr
+      ? {
+          ...linkedPrBarConfirm(linkedPr),
+          disabled: false,
+          onPress: props.onOpenLinkedPr,
+        }
+      : null;
+  const short = shortGitBarLabel(
+    model.quickAction,
+    terminology.shortLabel,
+    props.gitStatus?.pr?.state === "open" ? props.gitStatus.pr.number : null,
+  );
+  const gitPrimary: AppBarConfirm | null = short
+    ? {
+        label: short.label,
+        accessibilityLabel: model.quickAction.label,
+        showLabel: true,
+        disabled: short.disabled,
+        onPress: () => {
+          void model.runQuickAction();
+        },
+      }
+    : null;
+  const primaryAction = linkedPrimary ?? gitPrimary;
+  // Linked-PR pill must keep Push/Commit in the hold menu; only omit when the pill *is* that action.
+  const omitQuickAction =
+    primaryAction !== null &&
+    !primaryAction.disabled &&
+    (linkedPrimary !== null ? model.quickAction.kind === "open_pr" : true);
+  return {
+    primaryAction,
+    menu: threadGitMenuFromModel(props, model, omitQuickAction),
+  };
+}
+
+/** The thread's git menu, shared by Review (no primary button there). */
+export function useThreadGitMenuDefinition(props: ThreadGitMenuProps): AppBarMenu | null {
+  const model = useThreadGitControlModel(props);
+  return threadGitMenuFromModel(props, model, false);
 }

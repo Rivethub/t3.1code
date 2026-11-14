@@ -8,7 +8,7 @@ import type { ThreadInspectorMode } from "./thread-inspector-navigation";
 import { useWorkspaceBackNavigation } from "../layout/workspace/useAndroidWorkspaceNavigation";
 import {
   threadTerminalMenu,
-  useThreadGitMenuDefinition,
+  useThreadGitBar,
   type ThreadGitControlsProps,
 } from "./ThreadGitControls";
 
@@ -25,8 +25,30 @@ export function ThreadHeader(props: {
   const goBack = useWorkspaceBackNavigation();
   const { toggleAuxiliaryPane, startNewTask } = useAdaptiveWorkspaceLayout();
   const { panes } = useWorkspacePaneState();
-  const gitMenu = useThreadGitMenuDefinition(props.gitControls);
+  const { primaryAction: gitPrimaryAction, menu: gitMenu } = useThreadGitBar(props.gitControls);
   const terminalMenu = threadTerminalMenu(props.gitControls);
+  // Edit-style text CTA + Safari-Back long-press menu (no chevron). Nest Terminal under Git.
+  const gitMenuWithTerminal: AppBarMenu =
+    terminalMenu !== null
+      ? {
+          ...gitMenu,
+          items: [
+            ...gitMenu.items,
+            {
+              id: "git-terminal",
+              title: terminalMenu.title,
+              icon:
+                typeof terminalMenu.icon === "string" ? terminalMenu.icon : terminalMenu.icon.ios,
+              items: terminalMenu.items,
+            },
+          ],
+        }
+      : gitMenu;
+  // Disabled pills drop their iOS long-press menu (V5StackHeader), so keep the
+  // standalone Git control whenever the pill cannot run the primary action.
+  const activePill = gitPrimaryAction !== null && !gitPrimaryAction.disabled;
+  const confirm = activePill ? { ...gitPrimaryAction, menu: gitMenuWithTerminal } : undefined;
+  const menus: AppBarMenu[] = activePill ? [] : [gitMenuWithTerminal];
   const filesVisible = props.inspectorMode === "files" && panes.auxiliaryPaneVisible;
   const actions: AppBarAction[] = props.hasThreadCwd
     ? [
@@ -40,7 +62,6 @@ export function ThreadHeader(props: {
         },
       ]
     : [];
-  const menus = [gitMenu, terminalMenu].filter((menu): menu is AppBarMenu => menu !== null);
 
   return (
     <AppBar
@@ -59,6 +80,7 @@ export function ThreadHeader(props: {
       }
       actions={actions}
       menus={menus}
+      confirm={confirm}
       hideBottomBorder
     />
   );

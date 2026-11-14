@@ -53,6 +53,22 @@ export interface AppBarConfirm {
   readonly onPress: () => void;
   readonly disabled?: boolean;
   readonly loading?: boolean;
+  /**
+   * When true, shows `label` in the toolbar. Sheets keep the checkmark-only control by
+   * leaving this unset. With `icon` and no label, both platforms use an icon button.
+   * With both `showLabel` and `icon`, platforms that support it show the glyph beside the label
+   * (e.g. PR glyph + linked count).
+   */
+  readonly showLabel?: boolean;
+  /** Custom glyph; without `showLabel`, replaces the default checkmark (iOS) / text (Android). */
+  readonly icon?: AppSymbolName;
+  /** Defaults to `label`. Use when the visible control is icon-only or shortened. */
+  readonly accessibilityLabel?: string;
+  /**
+   * Long-press menu on the confirm control (iOS: primaryAction + menu; Android: long-press).
+   * When set, AppBar does not also render this menu as a separate trailing icon.
+   */
+  readonly menu?: AppBarMenu;
 }
 
 export interface AppBarSearch {
