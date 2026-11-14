@@ -194,6 +194,26 @@ describe("pull request primary control", () => {
     );
   });
 
+  it("prefers auto-merge when the host says branch rules still block a merge", () => {
+    expect(
+      resolvePullRequestPrimaryControl({
+        ...open,
+        checksState: "passing",
+        canMergeNow: false,
+      }),
+    ).toBe("enable-auto-merge");
+  });
+
+  it("merges immediately when the host says the pull request is ready now", () => {
+    expect(
+      resolvePullRequestPrimaryControl({
+        ...open,
+        checksState: "pending",
+        canMergeNow: true,
+      }),
+    ).toBe("merge");
+  });
+
   it("does not offer auto-merge while the host state is unknown", () => {
     expect(
       resolvePullRequestPrimaryControl({
@@ -1620,6 +1640,52 @@ describe("the compact row's single action slot", () => {
     expect(
       resolveThreadPanelPullRequestAction(openDetail({ checks: [check("action-required")] })),
     ).toBeNull();
+  });
+
+  it("offers enable-auto-merge while checks run when that is available instead of Merge", () => {
+    expect(
+      resolveThreadPanelPullRequestAction(
+        openDetail({
+          autoMergeEnabled: false,
+          checks: [check("pending")],
+          capabilities: {
+            actions: ["merge", "enable-auto-merge"],
+            mergeMethods: ["merge", "squash"],
+          } as unknown as PullRequestDetailView["capabilities"],
+          viewerPermissions: {
+            actions: ["merge", "enable-auto-merge"],
+          } as unknown as PullRequestDetailView["viewerPermissions"],
+        }),
+      ),
+    ).toBe("enable-auto-merge");
+  });
+
+  it("offers enable-auto-merge when the host says branch rules still block, even if checks pass", () => {
+    expect(
+      resolveThreadPanelPullRequestAction(
+        openDetail({
+          autoMergeEnabled: false,
+          canMergeNow: false,
+          checks: [check("success")],
+          capabilities: {
+            actions: ["merge", "enable-auto-merge"],
+            mergeMethods: ["merge", "squash"],
+          } as unknown as PullRequestDetailView["capabilities"],
+          viewerPermissions: {
+            actions: ["merge", "enable-auto-merge"],
+          } as unknown as PullRequestDetailView["viewerPermissions"],
+        }),
+      ),
+    ).toBe("enable-auto-merge");
+  });
+
+  it("hides Merge once auto-merge is armed, but still offers Fix for failing checks", () => {
+    expect(resolveThreadPanelPullRequestAction(openDetail({ autoMergeEnabled: true }))).toBeNull();
+    expect(
+      resolveThreadPanelPullRequestAction(
+        openDetail({ autoMergeEnabled: true, checks: [check("failure")] }),
+      ),
+    ).toBe("fix");
   });
 
   it("ranks conflicts above everything, then draft, then failing checks", () => {
