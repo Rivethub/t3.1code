@@ -45,6 +45,7 @@ import {
   ANDROID_READING_MAX_WIDTH,
   deriveCenteredContentHorizontalPadding,
 } from "../../lib/layout";
+import { NewThreadButton } from "../../components/NewThreadButton";
 import { EmptyState } from "../../components/ui/EmptyState";
 import { FloatingActionButton } from "../../components/ui/FloatingActionButton";
 import type { WorkspaceEnvironment, WorkspaceState } from "../../state/workspaceModel";
@@ -70,6 +71,7 @@ import { threadListEnvironmentsAtom } from "../../state/presentation";
 import type { PendingNewTask } from "../../state/use-pending-new-tasks";
 import { useQueuedThreadKeys } from "../../state/use-thread-outbox";
 import {
+  ThreadListV2CaughtUpPlaceholder,
   ThreadListV2PendingRow,
   ThreadListV2Row,
   ThreadListV2SettledShelfHeader,
@@ -152,7 +154,7 @@ interface HomeScreenProps {
   readonly onNewThreadInProject: (project: EnvironmentProject) => void;
 }
 
-const ESTIMATED_THREAD_LIST_V2_ROW_HEIGHT = 72;
+const ESTIMATED_THREAD_LIST_V2_ROW_HEIGHT = 112;
 // Rows away from the viewport skip their swipe actions (see
 // swipe-row-activation), so render further ahead: a fast fling then reaches
 // rows that are already built instead of rows still being rebuilt.
@@ -168,12 +170,17 @@ function HomeScrollView(props: ComponentProps<typeof ScrollView>) {
   if (Platform.OS !== "ios") return <ScrollView {...props} />;
 
   // Register the scroll view explicitly; layout and header siblings hide it from UIKit.
+  // Soft paints a hard-edged white band that bisects the glass filter chips on the phone
+  // list. Keep soft only for the iOS 26 sidebar fade; otherwise let the glass header alone
+  // handle the top edge so filters and rows share one continuous surface.
+  const topEdge =
+    sidebarSurface && Number.parseInt(String(Platform.Version), 10) < 27 ? "soft" : "hidden";
   return (
     <ScrollViewMarker
       style={{ flex: 1 }}
       scrollEdgeEffects={{
         ...nativeHeaderScrollEdgeEffects(Platform.OS, Platform.Version),
-        top: Number.parseInt(String(Platform.Version), 10) >= 27 ? "automatic" : "soft",
+        top: topEdge,
       }}
     >
       <ScrollView
@@ -278,7 +285,7 @@ export function HomeScreen(props: HomeScreenProps) {
       animated: false,
     });
   });
-  const swipeRowActivation = createSwipeRowActivation();
+  const [swipeRowActivation] = useState(createSwipeRowActivation);
   const activateVisibleRows = (rows: ReadonlyArray<ThreadListV2ListItem>) => {
     const state = listRef.current?.getState();
     if (state === undefined || !(state.end >= 0)) return;
@@ -303,17 +310,18 @@ export function HomeScreen(props: HomeScreenProps) {
       200,
     );
   };
+  const { swipeEnabled, releaseGate, scrollGateHandlers } = useSwipeableScrollGate({
+    onScroll: handleListScroll,
+    onScrollBeginDrag: handleScrollBeginDrag,
+  });
   const trackListTouches = (event: GestureResponderEvent, started: boolean) => {
     const { changedTouches, touches } = event.nativeEvent;
     swipeRowActivation.trackTouches(
       started ? changedTouches.map((touch) => String(touch.identifier)) : [],
       touches.map((touch) => String(touch.identifier)),
     );
+    if (!started && touches.length === 0) releaseGate();
   };
-  const { swipeEnabled, scrollGateHandlers } = useSwipeableScrollGate({
-    onScroll: handleListScroll,
-    onScrollBeginDrag: handleScrollBeginDrag,
-  });
 
   const { projects, selectedEnvironmentId, projectGroupingMode } = props;
   const projectScopes = useMemo(
@@ -489,6 +497,9 @@ export function HomeScreen(props: HomeScreenProps) {
         />
       );
     }
+    if (item.type === "v2-caught-up") {
+      return <ThreadListV2CaughtUpPlaceholder pane={sidebarSurface ? "sidebar" : "screen"} />;
+    }
     if (item.type === "v2-working-shelf") {
       return (
         <ThreadListV2WorkingShelfHeader
@@ -623,6 +634,8 @@ export function HomeScreen(props: HomeScreenProps) {
   const emptyState = deriveHomeEmptyState(props.catalogState, props.projects.length);
 
   if (!hasAnyThreads) {
+    const needsEnvironment = emptyState.showsAddEnvironment;
+    const showStartAction = !emptyState.loading;
     return (
       <View className={containerClassName}>
         <ScreenContent surface={sidebarSurface ? "drawer" : "screen"}>
@@ -641,19 +654,27 @@ export function HomeScreen(props: HomeScreenProps) {
           >
             <View className="w-full max-w-[430px]">
               <EmptyState
+                icon={needsEnvironment ? "desktopcomputer" : "bubble.left.and.bubble.right"}
                 title={emptyState.title}
                 detail={emptyState.detail}
-                actionLabel={emptyState.showsAddEnvironment ? "Add environment" : undefined}
-                onAction={emptyState.showsAddEnvironment ? props.onAddConnection : undefined}
                 action={
-                  Platform.OS === "android" && emptyState.showsAddEnvironment ? (
-                    <FloatingActionButton
-                      label="Add environment"
-                      icon="plus"
-                      variant="extended"
-                      tone="primary"
-                      onPress={props.onAddConnection}
-                    />
+                  showStartAction ? (
+                    Platform.OS === "android" ? (
+                      <FloatingActionButton
+                        label={needsEnvironment ? "Add environment" : "New thread"}
+                        icon={needsEnvironment ? "plus" : "square.and.pencil"}
+                        variant="extended"
+                        tone="primary"
+                        onPress={needsEnvironment ? props.onAddConnection : props.onStartNewTask}
+                      />
+                    ) : (
+                      <NewThreadButton
+                        extended
+                        label={needsEnvironment ? "Add environment" : "New thread"}
+                        icon={needsEnvironment ? "plus" : "square.and.pencil"}
+                        onPress={needsEnvironment ? props.onAddConnection : props.onStartNewTask}
+                      />
+                    )
                   ) : undefined
                 }
                 variant="plain"

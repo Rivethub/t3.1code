@@ -41,19 +41,21 @@ import Animated, {
 } from "react-native-reanimated";
 
 import { AppText as Text } from "../../components/ui/AppText";
+import { GlassSurface } from "../../components/ui/GlassSurface";
+import { NATIVE_LIQUID_GLASS_SUPPORTED } from "../../native/native-glass";
 import { useScaledTextRole } from "../settings/appearance/useScaledTextRole";
 import { SwipeRowActivationContext, type SwipeRowActivation } from "./swipe-row-activation";
 import { registerThreadDismissal } from "./thread-dismissal";
 
+// iOS 26 Messages/Mail: round Liquid Glass action pills, not full-height tinted lanes.
 const ACTION_ITEM_WIDTH = 58;
-const ACTION_CIRCLE_SIZE = 36;
-const ACTION_ICON_SIZE = 15;
-const COMPACT_ACTION_CIRCLE_SIZE = 28;
-const COMPACT_ACTION_ICON_SIZE = 13;
+const ACTION_CIRCLE_SIZE = 40;
+const ACTION_ICON_SIZE = 17;
+const COMPACT_ACTION_CIRCLE_SIZE = 32;
+const COMPACT_ACTION_ICON_SIZE = 14;
 // At the default app text size, "Unarchive", the longest label, fills its slot at about 1.12x.
 const ACTION_LABEL_MAX_FONT_SCALE = 1.1;
 
-const THREAD_SWIPE_ACTIONS_WIDTH = ACTION_ITEM_WIDTH * 2;
 const THREAD_SWIPE_SPRING = {
   damping: 26,
   mass: 0.7,
@@ -79,7 +81,7 @@ interface ThreadSwipeSecondaryAction extends ThreadSwipeAction {
 }
 
 function swipeActionsWidth(hasSecondaryAction: boolean) {
-  return hasSecondaryAction ? THREAD_SWIPE_ACTIONS_WIDTH : ACTION_ITEM_WIDTH;
+  return hasSecondaryAction ? ACTION_ITEM_WIDTH * 2 : ACTION_ITEM_WIDTH;
 }
 
 function resolveSecondaryAction(input: {
@@ -203,9 +205,16 @@ export function useSwipeableScrollGate(options?: {
   const onMomentumScrollEnd = useCallback(() => {
     update(false);
   }, [update]);
+  // Interrupted pans (automation, gesture handoff) can skip end-drag/momentum; lift clears the gate.
+  const releaseGate = useCallback(() => {
+    draggingRef.current = false;
+    clearSettle();
+    update(false);
+  }, [clearSettle, update]);
 
   return {
     swipeEnabled: !gateActive,
+    releaseGate,
     scrollGateHandlers: {
       onScroll,
       onScrollBeginDrag,
@@ -241,6 +250,7 @@ interface ThreadSwipeableProps {
 
 export function ThreadSwipeable(props: ThreadSwipeableProps) {
   const swipeableRef = useRef<SwipeableMethods | null>(null);
+  const compactActions = props.compactActions === true;
   const hasSecondaryAction = props.secondaryAction !== null;
   const actionsWidth = swipeActionsWidth(hasSecondaryAction);
   const fullSwipeThreshold = Math.max(actionsWidth + 44, props.fullSwipeWidth * 0.58);
@@ -422,7 +432,6 @@ export function ThreadSwipeable(props: ThreadSwipeableProps) {
   const handleSwipeableClose = useCallback(() => {
     if (swipeableRef.current) onSwipeableClose?.(swipeableRef.current);
   }, [onSwipeableClose]);
-  const compactActions = props.compactActions === true;
   const { secondaryAction, threadTitle } = props;
   // Swipeable calls this on every render; returning the previous element while nothing it shows
   // changed keeps a selection change from re-rendering the hidden actions.
@@ -525,6 +534,32 @@ export function ThreadSwipeable(props: ThreadSwipeableProps) {
   );
 }
 
+// Untinted Liquid Glass at rest (accent tint reads as a solid disc). Overdrag uses this soft
+// fill instead — GlassView width animation crashes UIKit / paints a thin line, not a capsule.
+function swipeCapsuleFillColor(tone: "primary" | "secondary" | "danger"): string {
+  if (tone === "danger") return "rgba(255, 59, 48, 0.34)";
+  if (tone === "primary") return "rgba(0, 122, 255, 0.3)";
+  return "rgba(120, 120, 128, 0.3)";
+}
+
+function swipeIconTintClassName(tone: "primary" | "secondary" | "danger") {
+  if (tone === "danger") return "accent-danger";
+  if (tone === "secondary") return "accent-icon-muted";
+  return "accent-primary";
+}
+
+function swipeSolidFillClassName(tone: "primary" | "secondary" | "danger") {
+  if (tone === "danger") return "bg-danger";
+  if (tone === "secondary") return "bg-secondary";
+  return "bg-primary";
+}
+
+function swipeSolidIconTintClassName(tone: "primary" | "secondary" | "danger") {
+  if (tone === "danger") return "accent-danger-foreground";
+  if (tone === "secondary") return "accent-secondary-foreground";
+  return "accent-primary-foreground";
+}
+
 function SwipeActionButton(props: {
   readonly accessibilityLabel: string;
   readonly actionsWidth: number;
@@ -548,6 +583,8 @@ function SwipeActionButton(props: {
   } = props;
   const circleSize = props.compact ? COMPACT_ACTION_CIRCLE_SIZE : ACTION_CIRCLE_SIZE;
   const iconSize = props.compact ? COMPACT_ACTION_ICON_SIZE : ACTION_ICON_SIZE;
+  const useGlass = NATIVE_LIQUID_GLASS_SUPPORTED;
+  const capsuleFill = swipeCapsuleFillColor(props.tone);
   const { fontScale } = useWindowDimensions();
   const labelLineHeight = useScaledTextRole("micro").lineHeight;
   // Android scales lineHeight by the full font scale, past maxFontSizeMultiplier.
@@ -566,15 +603,16 @@ function SwipeActionButton(props: {
       Extrapolation.CLAMP,
     );
     const stretch = Math.max(reveal - actionsWidth, 0);
-    const fullSwipeProgress = interpolate(
-      reveal,
-      [actionsWidth, fullSwipeThreshold + 20],
+    // Secondary yields as soon as the committing pill starts claiming overdrag.
+    const stretchFade = interpolate(
+      stretch,
+      [0, ACTION_ITEM_WIDTH * 0.7],
       [0, 1],
       Extrapolation.CLAMP,
     );
 
     return {
-      opacity: stretchesOnFullSwipe ? entryProgress : entryProgress * (1 - fullSwipeProgress),
+      opacity: stretchesOnFullSwipe ? entryProgress : entryProgress * (1 - stretchFade),
       transform: [
         {
           translateX:
@@ -584,13 +622,30 @@ function SwipeActionButton(props: {
       ],
     };
   });
-  const circleStyle = useAnimatedStyle(() => {
+  // Messages morph: RN View width only. Glass stays fixed-size and fades once stretch begins.
+  const pillStyle = useAnimatedStyle(() => {
     const reveal = Math.max(-translation.value, 0);
     const stretch = stretchesOnFullSwipe ? Math.max(reveal - actionsWidth, 0) : 0;
 
     return {
       transform: [{ translateX: -stretch }],
       width: circleSize + stretch,
+    };
+  });
+  const glassRestStyle = useAnimatedStyle(() => {
+    if (!stretchesOnFullSwipe) return { opacity: 1 };
+    const reveal = Math.max(-translation.value, 0);
+    const stretch = Math.max(reveal - actionsWidth, 0);
+    return {
+      opacity: interpolate(stretch, [0, 14], [1, 0], Extrapolation.CLAMP),
+    };
+  });
+  const capsuleFillStyle = useAnimatedStyle(() => {
+    if (!stretchesOnFullSwipe) return { opacity: useGlass ? 0 : 1 };
+    const reveal = Math.max(-translation.value, 0);
+    const stretch = Math.max(reveal - actionsWidth, 0);
+    return {
+      opacity: useGlass ? interpolate(stretch, [0, 14], [0, 1], Extrapolation.CLAMP) : 1,
     };
   });
   const iconStyle = useAnimatedStyle(() => {
@@ -604,7 +659,7 @@ function SwipeActionButton(props: {
     );
 
     return {
-      transform: [{ translateX: -stretch * (0.5 + armedProgress * 0.5) }],
+      transform: [{ translateX: -stretch * (0.5 + armedProgress * 0.2) }],
     };
   });
   const labelStyle = useAnimatedStyle(() => {
@@ -621,7 +676,7 @@ function SwipeActionButton(props: {
         [1, 0],
         Extrapolation.CLAMP,
       ),
-      transform: [{ translateX: -stretch * 0.5 }],
+      transform: [{ translateX: -stretch * 0.45 }],
     };
   });
 
@@ -634,31 +689,73 @@ function SwipeActionButton(props: {
         alignItems: "center",
         height: "100%",
         justifyContent: "center",
-        opacity: pressed ? 0.72 : 1,
+        opacity: pressed ? 0.78 : 1,
         width: "100%",
       })}
     >
-      <View style={{ height: circleSize, width: circleSize }}>
+      <View style={{ height: circleSize, overflow: "visible", width: circleSize }}>
         <Animated.View
-          className={
-            props.tone === "danger"
-              ? "bg-danger"
-              : props.tone === "secondary"
-                ? "bg-secondary"
-                : "bg-primary"
-          }
           style={[
             {
-              borderRadius: 999,
+              borderRadius: circleSize / 2,
               height: circleSize,
               left: 0,
+              overflow: "hidden",
               position: "absolute",
               top: 0,
             },
-            circleStyle,
+            pillStyle,
           ]}
-        />
+        >
+          {useGlass ? (
+            <>
+              <Animated.View
+                style={[
+                  {
+                    backgroundColor: capsuleFill,
+                    borderRadius: circleSize / 2,
+                    flex: 1,
+                    height: circleSize,
+                  },
+                  capsuleFillStyle,
+                ]}
+              />
+              <Animated.View
+                pointerEvents="none"
+                style={[
+                  {
+                    height: circleSize,
+                    justifyContent: "center",
+                    position: "absolute",
+                    right: 0,
+                    top: 0,
+                    width: circleSize,
+                  },
+                  glassRestStyle,
+                ]}
+              >
+                <GlassSurface
+                  chrome="none"
+                  tintColor={null}
+                  style={{
+                    borderRadius: circleSize / 2,
+                    height: circleSize,
+                    width: circleSize,
+                  }}
+                >
+                  {null}
+                </GlassSurface>
+              </Animated.View>
+            </>
+          ) : (
+            <View
+              className={swipeSolidFillClassName(props.tone)}
+              style={{ borderRadius: 999, flex: 1, height: circleSize }}
+            />
+          )}
+        </Animated.View>
         <Animated.View
+          pointerEvents="none"
           style={[
             {
               alignItems: "center",
@@ -676,11 +773,9 @@ function SwipeActionButton(props: {
             name={props.icon}
             size={iconSize}
             tintColorClassName={
-              props.tone === "danger"
-                ? "accent-danger-foreground"
-                : props.tone === "secondary"
-                  ? "accent-secondary-foreground"
-                  : "accent-primary-foreground"
+              useGlass
+                ? swipeIconTintClassName(props.tone)
+                : swipeSolidIconTintClassName(props.tone)
             }
             type="monochrome"
           />
@@ -712,6 +807,7 @@ function SwipeActionButton(props: {
           alignItems: "center",
           height: "100%",
           justifyContent: "center",
+          overflow: "visible",
           width: ACTION_ITEM_WIDTH,
           zIndex: props.stretchesOnFullSwipe ? 2 : 1,
         },
@@ -757,47 +853,73 @@ function ThreadSwipeActions(props: {
     [fullSwipeThreshold, onFullSwipeArmedChange, translation],
   );
 
+  // Messages keeps the committing action trailing so overdrag stretches it left into a capsule.
+  const primaryTone =
+    props.primaryAction.destructive === true ? ("danger" as const) : ("primary" as const);
+  const primaryButton = (
+    <SwipeActionButton
+      accessibilityLabel={props.primaryAction.accessibilityLabel}
+      actionsWidth={actionsWidth}
+      tone={primaryTone}
+      compact={props.compact}
+      entryRange={
+        secondaryAction === null
+          ? [8, ACTION_ITEM_WIDTH * 0.72]
+          : fullSwipeIsPrimary
+            ? [8, ACTION_ITEM_WIDTH * 0.72]
+            : [ACTION_ITEM_WIDTH * 0.55, ACTION_ITEM_WIDTH * 2 * 0.85]
+      }
+      fullSwipeThreshold={props.fullSwipeThreshold}
+      icon={props.primaryAction.icon}
+      label={props.primaryAction.label}
+      onPress={props.primaryAction.onPress}
+      stretchesOnFullSwipe={fullSwipeIsPrimary}
+      translation={props.translation}
+    />
+  );
+  const secondaryButton =
+    secondaryAction === null ? null : (
+      <SwipeActionButton
+        accessibilityLabel={secondaryAction.accessibilityLabel}
+        actionsWidth={actionsWidth}
+        tone={secondaryAction.tone}
+        compact={props.compact}
+        entryRange={
+          fullSwipeIsPrimary
+            ? [ACTION_ITEM_WIDTH * 0.55, ACTION_ITEM_WIDTH * 2 * 0.85]
+            : [8, ACTION_ITEM_WIDTH * 0.72]
+        }
+        fullSwipeThreshold={props.fullSwipeThreshold}
+        icon={secondaryAction.icon}
+        label={secondaryAction.label}
+        menu={secondaryAction.menu}
+        onPress={secondaryAction.onPress}
+        stretchesOnFullSwipe={!fullSwipeIsPrimary}
+        translation={props.translation}
+      />
+    );
+
   return (
     <View
       style={{
         backgroundColor: props.backgroundColor,
         flexDirection: "row",
         height: "100%",
+        // Allow the committing capsule to grow left over the other action.
+        overflow: "visible",
         width: actionsWidth,
       }}
     >
-      <SwipeActionButton
-        accessibilityLabel={props.primaryAction.accessibilityLabel}
-        actionsWidth={actionsWidth}
-        tone={props.primaryAction.destructive === true ? "danger" : "primary"}
-        compact={props.compact}
-        entryRange={
-          secondaryAction === null
-            ? [8, ACTION_ITEM_WIDTH * 0.72]
-            : [ACTION_ITEM_WIDTH * 0.55, THREAD_SWIPE_ACTIONS_WIDTH * 0.85]
-        }
-        fullSwipeThreshold={props.fullSwipeThreshold}
-        icon={props.primaryAction.icon}
-        label={props.primaryAction.label}
-        onPress={props.primaryAction.onPress}
-        stretchesOnFullSwipe={fullSwipeIsPrimary}
-        translation={props.translation}
-      />
-      {secondaryAction === null ? null : (
-        <SwipeActionButton
-          accessibilityLabel={secondaryAction.accessibilityLabel}
-          actionsWidth={actionsWidth}
-          tone={secondaryAction.tone}
-          compact={props.compact}
-          entryRange={[8, ACTION_ITEM_WIDTH * 0.72]}
-          fullSwipeThreshold={props.fullSwipeThreshold}
-          icon={secondaryAction.icon}
-          label={secondaryAction.label}
-          menu={secondaryAction.menu}
-          onPress={secondaryAction.onPress}
-          stretchesOnFullSwipe={!fullSwipeIsPrimary}
-          translation={props.translation}
-        />
+      {fullSwipeIsPrimary ? (
+        <>
+          {secondaryButton}
+          {primaryButton}
+        </>
+      ) : (
+        <>
+          {primaryButton}
+          {secondaryButton}
+        </>
       )}
     </View>
   );

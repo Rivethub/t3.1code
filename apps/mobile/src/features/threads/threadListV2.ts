@@ -116,7 +116,7 @@ export function resolveThreadListV2SnoozeMenuSelection(input: {
 }
 
 export function resolveThreadListV2SwipeActions(input: {
-  readonly variant: "card" | "slim";
+  readonly settled: boolean;
   readonly settlementSupported: boolean;
   readonly snoozeSupported: boolean;
   readonly snoozable: boolean;
@@ -128,11 +128,7 @@ export function resolveThreadListV2SwipeActions(input: {
   if (input.snoozed === true) {
     return { primary: "unsnooze", secondary: null };
   }
-  const primary = input.settlementSupported
-    ? input.variant === "slim"
-      ? "unsettle"
-      : "settle"
-    : "archive";
+  const primary = input.settlementSupported ? (input.settled ? "unsettle" : "settle") : "archive";
   return {
     primary,
     secondary: input.snoozeSupported && input.snoozable ? "snooze" : null,
@@ -244,6 +240,19 @@ export function threadHasUnseenCompletion(
   const lastVisitedAtMs = Date.parse(thread.lastVisitedAt);
   if (Number.isNaN(lastVisitedAtMs)) return true;
   return completedAtMs > lastVisitedAtMs;
+}
+
+export function resolveThreadListMessagePreview(
+  thread: Pick<EnvironmentThreadShell, "source">,
+): { readonly speaker: "you" | "agent"; readonly text: string } | null {
+  const message = thread.source.latestVisibleMessage;
+  if (message == null) return null;
+  const text = message.text.replace(/\s+/g, " ").trim();
+  if (text.length === 0) return null;
+  return {
+    speaker: message.role === "user" ? "you" : "agent",
+    text,
+  };
 }
 
 export function resolveThreadListV2WokeAt(
@@ -379,6 +388,8 @@ export interface ThreadListV2Layout {
   readonly hiddenSettledCount: number;
   /** The settled rows the shelf may list, before its visible limit. */
   readonly listedSettledThreads: ReadonlyArray<EnvironmentThreadShell>;
+  /** Attention inbox rows above Working/Snoozed/Settled (excludes pinned). */
+  readonly activeCount: number;
   readonly workingCount: number;
   readonly workingShelfHeaderIndex: number | null;
   readonly snoozedCount: number;
@@ -413,6 +424,11 @@ export interface ThreadListV2PendingListItem {
   readonly showTrailingDivider: boolean;
 }
 
+export interface ThreadListV2CaughtUpListItem {
+  readonly type: "v2-caught-up";
+  readonly key: "v2-caught-up";
+}
+
 export interface ThreadListV2WorkingShelfListItem {
   readonly type: "v2-working-shelf";
   readonly key: "v2-working-shelf";
@@ -441,6 +457,7 @@ export interface ThreadListV2SettledShelfListItem {
 export type ThreadListV2ListItem =
   | ThreadListV2ThreadListItem
   | ThreadListV2PendingListItem
+  | ThreadListV2CaughtUpListItem
   | ThreadListV2WorkingShelfListItem
   | ThreadListV2SnoozedShelfListItem
   | ThreadListV2SettledShelfListItem;
@@ -451,6 +468,7 @@ export function isThreadListV2ListItem(value: {
   return (
     value.type === "v2-thread" ||
     value.type === "v2-pending" ||
+    value.type === "v2-caught-up" ||
     value.type === "v2-working-shelf" ||
     value.type === "v2-snoozed-shelf" ||
     value.type === "v2-settled-shelf"
@@ -488,6 +506,8 @@ export function threadListV2ListItemsAreEqual(
         previous.showPendingDivider === item.showPendingDivider &&
         previous.showTrailingDivider === item.showTrailingDivider
       );
+    case "v2-caught-up":
+      return previous.type === "v2-caught-up";
     case "v2-working-shelf":
       return (
         previous.type === "v2-working-shelf" &&
@@ -516,17 +536,12 @@ function resolveThreadListV2ItemTimeLabel(
   item: ThreadListV2Item,
   showSnoozeWakeLabel: boolean,
 ): string {
-  const { thread, variant, snoozed } = item;
+  const { thread, snoozed } = item;
   if (showSnoozeWakeLabel) return "";
-  if (
-    variant === "card" &&
-    (resolveThreadListV2RowStatus(thread) !== "ready" ||
-      item.wokeAt !== null ||
-      threadHasUnseenCompletion(thread))
-  )
-    return "";
+  // Status badges and Woke own the trailing slot; unread-ready rows still keep a date.
+  if (resolveThreadListV2RowStatus(thread) !== "ready" || item.wokeAt !== null) return "";
   const settledTimestamp =
-    variant === "slim" && !snoozed ? resolveSettledThreadTimestamp(thread) : null;
+    !snoozed && thread.settledOverride === "settled" ? resolveSettledThreadTimestamp(thread) : null;
   return relativeTime(
     settledTimestamp ?? resolveThreadActivityTimestamp(thread) ?? thread.createdAt,
   );
@@ -535,6 +550,7 @@ function resolveThreadListV2ItemTimeLabel(
 export function buildThreadListV2ListItems(input: {
   readonly items: ReadonlyArray<ThreadListV2Item>;
   readonly pendingTasks: ReadonlyArray<PendingNewTask>;
+  readonly activeCount?: number;
   readonly workingCount?: number;
   readonly workingShelfExpanded?: boolean;
   readonly workingShelfHeaderIndex?: number | null;
@@ -565,7 +581,7 @@ export function buildThreadListV2ListItems(input: {
         ? input.snoozeLabelNow
         : undefined;
     const move =
-      item.variant === "card"
+      !item.snoozed && item.thread.settledOverride !== "settled"
         ? input.moveAvailability?.get(`${item.thread.environmentId}:${item.thread.id}`)
         : undefined;
     return {
@@ -589,6 +605,7 @@ export function buildThreadListV2ListItems(input: {
     showPendingDivider: index === 0,
     showTrailingDivider: false,
   }));
+  const activeCount = input.activeCount ?? 0;
   const workingCount = input.workingCount ?? 0;
   const workingShelfHeaderIndex = input.workingShelfHeaderIndex ?? null;
   const snoozedCount = input.snoozedCount ?? 0;
@@ -598,8 +615,24 @@ export function buildThreadListV2ListItems(input: {
   const snoozedEnd = settledShelfHeaderIndex ?? threadItems.length;
   const workingEnd = snoozedShelfHeaderIndex ?? snoozedEnd;
   const activeEnd = workingShelfHeaderIndex ?? workingEnd;
-  const result: ThreadListV2ListItem[] = [...pendingItems, ...threadItems.slice(0, activeEnd)];
+  const attentionItems = threadItems.slice(0, activeEnd);
+  const result: ThreadListV2ListItem[] = [...pendingItems, ...attentionItems];
   const shelfDisabled = input.shelfPreferencesLoading === true;
+  // Pinned rows are outside activeCount; an approval/input/request pin still needs a response.
+  const actionablePinned = input.items.slice(0, activeEnd).some((item) => {
+    if (!item.pinned) return false;
+    const status = resolveThreadListV2Status(item.thread);
+    return status === "approval" || status === "input" || status === "request";
+  });
+  // Inbox zero: attention queue is clear, but Working/Snoozed/Settled still exist.
+  if (
+    activeCount === 0 &&
+    pendingItems.length === 0 &&
+    !actionablePinned &&
+    workingCount + snoozedCount + settledCount > 0
+  ) {
+    result.push({ type: "v2-caught-up", key: "v2-caught-up" });
+  }
   if (workingShelfHeaderIndex !== null && workingCount > 0) {
     result.push({
       type: "v2-working-shelf",
@@ -777,7 +810,7 @@ export function buildThreadListV2Items(input: {
     // Searching lists every match by rank across shelves, as the palette and
     // the web sidebar do, then threads listed for their messages in the
     // server's order. Each row keeps its shelf's look.
-    const slim = new Set([...snoozed, ...settled]);
+    const shelfThreads = new Set([...snoozed, ...settled]);
     const snoozedThreads = new Set(snoozed);
     const pinnedThreads = new Set(pinned);
     const threadByKey = new Map(
@@ -794,14 +827,15 @@ export function buildThreadListV2Items(input: {
     return {
       items: results.map((thread, index) => ({
         thread,
-        variant: slim.has(thread) ? "slim" : "card",
+        variant: "card" as const,
         snoozed: snoozedThreads.has(thread),
         pinned: pinnedThreads.has(thread),
-        wokeAt: slim.has(thread) ? null : resolveThreadListV2WokeAt(thread, { now }),
+        wokeAt: shelfThreads.has(thread) ? null : resolveThreadListV2WokeAt(thread, { now }),
         isLast: index === results.length - 1,
       })),
       hiddenSettledCount: 0,
       listedSettledThreads: [],
+      activeCount: 0,
       workingCount: 0,
       workingShelfHeaderIndex: null,
       snoozedCount: 0,
@@ -899,7 +933,7 @@ export function buildThreadListV2Items(input: {
   for (const thread of visibleSnoozed) {
     items.push({
       thread,
-      variant: "slim",
+      variant: "card",
       snoozed: true,
       pinned: false,
       wokeAt: null,
@@ -910,7 +944,7 @@ export function buildThreadListV2Items(input: {
   for (const thread of visibleSettled) {
     items.push({
       thread,
-      variant: "slim",
+      variant: "card",
       snoozed: false,
       pinned: false,
       wokeAt: null,
@@ -925,6 +959,7 @@ export function buildThreadListV2Items(input: {
     items,
     hiddenSettledCount: Math.max(0, settledTotal - pagedSettled.length),
     listedSettledThreads: listedSettled,
+    activeCount: orderedActive.length,
     workingCount: orderedWorking.length,
     workingShelfHeaderIndex,
     snoozedCount: orderedSnoozed.length,
