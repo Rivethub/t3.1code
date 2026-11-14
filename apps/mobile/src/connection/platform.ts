@@ -24,6 +24,7 @@ import { appAtomRegistry } from "../state/atom-registry";
 import { mobileApplicationActiveWakeup } from "./app-state-wakeups";
 import * as EnvironmentOwnedDataCleanup from "./environment-owned-data-cleanup";
 import * as ConnectionStorage from "./storage";
+import { layerNetworkWake } from "./network-wake";
 
 function networkStatus(state: Network.NetworkState): "unknown" | "offline" | "online" {
   if (state.isConnected === false) {
@@ -255,6 +256,7 @@ type ConnectionPlatformLayerSource =
   | typeof layerConnectivity
   | typeof layerWakeups
   | typeof layerProvidedCapabilities
+  | typeof layerNetworkWake
   | typeof layerPlatformConnectionSource
   | typeof EnvironmentOwnedDataCleanup.layer;
 
@@ -266,6 +268,7 @@ export const layer: Layer.Layer<
   layerProvidedConnectionStorage,
   Runtime.layer,
   layerConnectivity,
+  layerNetworkWake,
   layerWakeups,
   layerProvidedCapabilities,
   layerPlatformConnectionSource,
