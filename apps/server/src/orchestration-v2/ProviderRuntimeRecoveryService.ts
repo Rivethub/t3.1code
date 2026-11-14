@@ -24,6 +24,14 @@ import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import { restartContinuationRun } from "./RestartContinuation.ts";
+import {
+  formatRestartRestoreCheckSummary,
+  restartRestoreCheckEntry,
+  restartRestoreForecastMessage,
+  summarizeRestartRestoreCheck,
+  type RestartRestoreCheckEntry,
+  type RestartRestoreCheckSummary,
+} from "./RestartRestoreCheck.ts";
 import { isBufferedProviderNotification } from "./NotificationMailbox.ts";
 import { queuedRunsInDeliveryOrder } from "./QueuedRunOrder.ts";
 import {
@@ -59,6 +67,7 @@ export interface ProviderRuntimeRecoverySummary {
   readonly closedRequests: number;
   readonly retiredEffects: number;
   readonly requeuedEffects: number;
+  readonly restoreCheck: RestartRestoreCheckSummary;
 }
 
 export interface ProviderRuntimeReconciliationSummary {
@@ -67,6 +76,7 @@ export interface ProviderRuntimeReconciliationSummary {
   readonly closedRequests: number;
   readonly retiredEffects: number;
   readonly requeuedEffects: number;
+  readonly restoreCheck: RestartRestoreCheckSummary;
 }
 
 export class ProviderRuntimeRecoveryService extends Context.Service<
@@ -278,6 +288,18 @@ export const make = Effect.gen(function* () {
         ),
       ]);
       const detail = `Cancelled because the server ${trigger === "startup" ? "restarted" : "shut down"} before the provider work completed.`;
+      const recoveryProjection = {
+        ...projection,
+        providerSessions: sessionsLiveAtStart(projection, stoppedThisPass),
+      };
+      const restoreForecast =
+        trigger === "startup"
+          ? restartRestoreCheckEntry({
+              projection: recoveryProjection,
+              now,
+              continueAfterRestart,
+            })
+          : undefined;
       const commandId = CommandId.make(
         `command:runtime-reconcile:${trigger}:${projection.thread.id}:${DateTime.formatIso(now)}`,
       );
@@ -636,6 +658,10 @@ export const make = Effect.gen(function* () {
         }
         // Queued runs and unsent resumes leave no visible turn behind, so there is nothing to explain.
         if (run.status === "queued" || unsentResumeRunIds.includes(run.id)) continue;
+        const noticeMessage =
+          trigger === "startup" && restoreForecast !== undefined
+            ? restartRestoreForecastMessage(detail, restoreForecast)
+            : detail;
         events.push({
           id: yield* allocateEventId(),
           type: "turn-item.updated",
@@ -661,7 +687,7 @@ export const make = Effect.gen(function* () {
             completedAt: now,
             updatedAt: now,
             type: "system_notice",
-            message: detail,
+            message: noticeMessage,
           },
         });
       }
@@ -832,12 +858,10 @@ export const make = Effect.gen(function* () {
           },
         });
       }
+      const restoreCheck = restoreForecast;
       const continuationRun =
         continueAfterRestart && trigger === "startup"
-          ? restartContinuationRun(
-              { ...projection, providerSessions: sessionsLiveAtStart(projection, stoppedThisPass) },
-              now,
-            )
+          ? restartContinuationRun(recoveryProjection, now)
           : undefined;
       const effects: Array<EffectOutbox.PendingOrchestrationEffectV2> = continuationRun
         ? [
@@ -905,6 +929,7 @@ export const make = Effect.gen(function* () {
         closedRequests: requests.length,
         retiredEffects,
         cancelledEffectIds,
+        restoreCheck,
       };
     },
   );
@@ -924,6 +949,7 @@ export const make = Effect.gen(function* () {
     let stoppedSessions = 0;
     let closedRequests = 0;
     let retiredEffects = 0;
+    const restoreChecks: RestartRestoreCheckEntry[] = [];
     const stoppedThisPass = new Map<string, RecoverySession>();
     const grouped = trigger === "shutdown" && threadIds.length > 1;
     const groupSize = grouped ? 32 : 1;
@@ -957,6 +983,7 @@ export const make = Effect.gen(function* () {
           stoppedSessions += result.stoppedSessions;
           closedRequests += result.closedRequests;
           retiredEffects += result.retiredEffects;
+          if (result.restoreCheck !== undefined) restoreChecks.push(result.restoreCheck);
         }
       });
       yield* (grouped ? eventSink.withProviderBatch(reconcileGroup) : reconcileGroup).pipe(
@@ -974,12 +1001,17 @@ export const make = Effect.gen(function* () {
         (cause) => new ProviderRuntimeRecoveryError({ operation: "drain-outbox", cause }),
       ),
     );
+    const restoreCheck = summarizeRestartRestoreCheck(restoreChecks);
+    if (trigger === "startup") {
+      yield* Effect.logInfo(formatRestartRestoreCheckSummary(restoreCheck), { restoreCheck });
+    }
     return {
       terminalizedRuns,
       stoppedSessions,
       closedRequests,
       retiredEffects: retiredEffects + outboxReconciliation.cancelled,
       requeuedEffects: outboxReconciliation.requeued,
+      restoreCheck,
     } satisfies ProviderRuntimeReconciliationSummary;
   });
 
