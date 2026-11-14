@@ -18,6 +18,7 @@ import {
   ThreadId,
   RunId,
   NonNegativeInt,
+  PositiveInt,
   ProjectId,
 } from "@t3tools/contracts";
 import * as SecureRandom from "effect/crypto/SecureRandom";
@@ -207,7 +208,14 @@ const ThreadSearchTool = Tool.make("t3_thread_search", {
         projectId: OrchestrationThreadSearchMatch.fields.projectId,
         title: Schema.String,
         link: Schema.optional(Schema.String),
-        source: Schema.Literals(["title", "user", "assistant"]),
+        source: Schema.Literals(["title", "pull_request", "user", "assistant"]),
+        pullRequest: Schema.optional(
+          Schema.Struct({
+            number: PositiveInt,
+            repository: Schema.String,
+            url: Schema.String,
+          }),
+        ),
         snippet: Schema.optional(OrchestrationThreadSearchMatch.fields.snippet),
         messageCreatedAt: Schema.optional(OrchestrationThreadSearchMatch.fields.messageCreatedAt),
       }),

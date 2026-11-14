@@ -72,6 +72,10 @@ import { runRanAfter } from "@t3tools/shared/orchestrationV2ThreadError";
 import { formatThreadLink } from "@t3tools/shared/threadLinks";
 import { threadPullRequestUpdatedAtMs } from "@t3tools/shared/threadPullRequests";
 import {
+  parseThreadListPullRequestFilter,
+  threadMatchesPullRequestListFilters,
+} from "@t3tools/shared/threadPullRequests";
+import {
   normalizeThreadPullRequestKey,
   visibleThreadPullRequests,
 } from "../sourceControl/threadPullRequests.ts";
@@ -3160,6 +3164,12 @@ const make = Effect.gen(function* () {
             input.snoozed !== true ||
             (thread.snoozedUntil != null && DateTime.toEpochMillis(thread.snoozedUntil) > nowMs),
         );
+      const pullRequestQuery = input.pullRequest?.trim();
+      // An unparseable filter matches nothing rather than everything.
+      const pullRequestFilter =
+        pullRequestQuery === undefined || pullRequestQuery.length === 0
+          ? undefined
+          : parseThreadListPullRequestFilter(pullRequestQuery);
       // Shells are the costly part, so build them only for the threads the page needs.
       const shellsOf = (threads: ReadonlyArray<{ readonly id: ThreadId }>) =>
         threads.length === 0
@@ -3177,13 +3187,18 @@ const make = Effect.gen(function* () {
       const limit = input.limit ?? DEFAULT_THREAD_LIST_LIMIT;
       let page: ReadonlyArray<OrchestrationV2ThreadShell>;
       let total: number;
-      if (statuses === null && input.snoozed === undefined) {
+      if (statuses === null && input.snoozed === undefined && pullRequestFilter === undefined) {
         total = candidates.length;
         page = yield* shellsOf(candidates.slice(cursor, cursor + limit));
       } else {
-        // Status and snooze state are derived from the shell.
-        const filtered = (yield* shellsOf(candidates))
+        // Status, snooze state, and linked pull requests are derived from the shell.
+        const filtered = (yield* shellsOf(pullRequestFilter === null ? [] : candidates))
           .filter((thread) => statuses === null || statuses.has(listedThreadStatus(thread)))
+          .filter(
+            (thread) =>
+              pullRequestFilter == null ||
+              threadMatchesPullRequestListFilters(thread.pullRequests, pullRequestFilter),
+          )
           .filter(
             (thread) => input.snoozed === undefined || isSnoozed(thread, nowMs) === input.snoozed,
           );
