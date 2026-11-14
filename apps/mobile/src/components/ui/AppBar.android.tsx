@@ -181,11 +181,21 @@ function AppBarView(props: AppBarProps & { readonly searchState?: SearchState })
         optionsVersion={props.optionsVersion}
       />
     );
+  const titleMenu = props.titleMenu;
   const header = (
     <AndroidScreenHeader
       title={props.title}
       titleContent={props.titleContent}
       subtitle={props.subtitle}
+      titleMenu={
+        titleMenu
+          ? {
+              title: titleMenu.status ?? titleMenu.title,
+              actions: menuActionsFromAppBarItems(titleMenu.items),
+              onSelect: (id) => selectMenuItem(titleMenu.items, id),
+            }
+          : undefined
+      }
       onBack={props.onClose ? undefined : props.onBack}
       leading={
         (props.onClose ? (
