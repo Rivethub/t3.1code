@@ -124,6 +124,7 @@ import {
   type ProviderApprovalDecision,
   type ProviderApprovalFullAccessOverride,
   type ProviderApprovalOption,
+  type ProviderContextUsage,
   ProviderDriverKind,
   type ProviderInstanceId,
   type ProviderRequestKind,
@@ -134,6 +135,7 @@ import {
   resolveIdleCompaction,
   isDelegatedAppThread,
 } from "@t3tools/contracts";
+import { toProviderContextUsage } from "../../provider/Drivers/ClaudeContextUsage.ts";
 
 import { FILE_HEADERS_ONLY, formatPatch, structuredPatch } from "diff";
 import * as Cause from "effect/Cause";
@@ -692,6 +694,8 @@ export interface ClaudeAgentSdkQuerySession {
     ReadonlyArray<ClaudePermissionRule>,
     ClaudeAgentSdkQueryRunnerError
   >;
+  /** On-demand only; summary detail avoids the SDK's token-count fallback model request. */
+  readonly getContextUsage: Effect.Effect<ProviderContextUsage, ClaudeAgentSdkQueryRunnerError>;
   readonly interrupt: Effect.Effect<void, ClaudeAgentSdkQueryRunnerError>;
   readonly close: Effect.Effect<void, ClaudeAgentSdkQueryRunnerError>;
 }
@@ -1837,6 +1841,10 @@ export const layerQueryRunner: Layer.Layer<
               Effect.map(({ state }) => state.rules),
               Effect.mapError((cause) => queryRunnerError(cause, "listPermissionRules")),
             ),
+            getContextUsage: Effect.tryPromise({
+              try: () => queryRuntime.getContextUsage({ detail: "summary" }),
+              catch: (cause) => queryRunnerError(cause, "getContextUsage"),
+            }).pipe(Effect.map(toProviderContextUsage)),
             interrupt: Effect.tryPromise({
               try: () => queryRuntime.interrupt(),
               catch: (cause) => queryRunnerError(cause, "interrupt"),
@@ -13950,6 +13958,29 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             yield* applySelectionLive(live, selection).pipe(
               Effect.catch((cause) =>
                 Effect.logWarning("orchestration-v2.claude-live-selection-failed", { cause }),
+              ),
+            );
+          }),
+          getContextUsage: Effect.fn("ClaudeAdapterV2.getContextUsage")(function* (usageInput) {
+            const liveQuery = yield* Ref.get(queryContext);
+            if (
+              liveQuery === null ||
+              liveQuery.stopping ||
+              liveQuery.nativeThreadId !== usageInput.providerThread.nativeThreadRef?.nativeId
+            ) {
+              return yield* new ProviderAdapter.ProviderAdapterProtocolError({
+                driver: CLAUDE_PROVIDER,
+                detail: "No live Claude session for this thread. Send a message first.",
+              });
+            }
+            return yield* liveQuery.query.getContextUsage.pipe(
+              Effect.mapError(
+                (cause) =>
+                  new ProviderAdapter.ProviderAdapterProtocolError({
+                    driver: CLAUDE_PROVIDER,
+                    detail: "Failed to read Claude context usage.",
+                    cause,
+                  }),
               ),
             );
           }),
