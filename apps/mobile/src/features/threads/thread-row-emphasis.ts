@@ -4,5 +4,13 @@ export function shouldRecedeThreadRow(input: {
   readonly status: ThreadListV2Status;
   readonly selected: boolean;
 }): boolean {
-  return !input.selected && (input.status === "working" || input.status === "waiting");
+  return (
+    !input.selected &&
+    (input.status === "working" ||
+      input.status === "committing" ||
+      input.status === "pushing" ||
+      input.status === "submitting" ||
+      input.status === "merging" ||
+      input.status === "waiting")
+  );
 }

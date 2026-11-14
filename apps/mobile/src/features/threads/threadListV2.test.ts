@@ -203,6 +203,38 @@ describe("resolveThreadListV2Status", () => {
     expect(resolveThreadListV2Status({ ...guest, hasPendingApprovals: true })).toBe("approval");
   });
 
+  it("labels in-flight commit, push, PR, or merge only when nothing else owns the row", () => {
+    const thread = presentThreadShell(
+      environmentId,
+      decodeThreadShell(makeRawThreadShell({ status: "completed" })),
+    );
+    expect(resolveThreadListV2Status(thread, { sourceControlStatus: "committing" })).toBe(
+      "committing",
+    );
+    expect(resolveThreadListV2Status(thread, { sourceControlStatus: "pushing" })).toBe("pushing");
+    expect(resolveThreadListV2Status(thread, { sourceControlStatus: "submitting" })).toBe(
+      "submitting",
+    );
+    expect(resolveThreadListV2Status(thread, { sourceControlStatus: "merging" })).toBe("merging");
+    expect(
+      resolveThreadListV2Status(
+        { ...thread, hasPendingUserInput: true },
+        { sourceControlStatus: "committing" },
+      ),
+    ).toBe("input");
+    const running = presentThreadShell(
+      environmentId,
+      decodeThreadShell(
+        makeRawThreadShell({
+          status: "running",
+          activeRunId: RunId.make("run-source-control"),
+          latestRunId: RunId.make("run-source-control"),
+        }),
+      ),
+    );
+    expect(resolveThreadListV2Status(running, { sourceControlStatus: "pushing" })).toBe("working");
+  });
+
   it.each([
     { roster: "dev server", task: { kind: "command" }, status: "ready" },
     { roster: "dev server watchdog", task: { kind: "monitor" }, status: "ready" },

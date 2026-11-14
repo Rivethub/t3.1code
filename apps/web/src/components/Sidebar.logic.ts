@@ -911,6 +911,10 @@ export type SidebarThreadStatus =
   | "request"
   | "preparing"
   | "working"
+  | "committing"
+  | "pushing"
+  | "submitting"
+  | "merging"
   | "waiting"
   | "failed"
   | "limited"
@@ -931,7 +935,15 @@ export function shouldRecedeSidebarThread(input: {
   ) {
     return false;
   }
-  if (input.status === "preparing" || input.status === "working" || input.status === "waiting") {
+  if (
+    input.status === "preparing" ||
+    input.status === "working" ||
+    input.status === "committing" ||
+    input.status === "pushing" ||
+    input.status === "submitting" ||
+    input.status === "merging" ||
+    input.status === "waiting"
+  ) {
     return true;
   }
   if (input.status === "ready" || input.status === "approval") {
@@ -950,7 +962,12 @@ type SidebarThreadStatusInput = Pick<
   | "blockedOnThreadWait"
 >;
 
-export function resolveSidebarThreadStatus(thread: SidebarThreadStatusInput): SidebarThreadStatus {
+export function resolveSidebarThreadStatus(
+  thread: SidebarThreadStatusInput,
+  options?: {
+    readonly sourceControlStatus?: "committing" | "pushing" | "submitting" | "merging" | null;
+  },
+): SidebarThreadStatus {
   if (thread.hasPendingApprovals || thread.pendingSubagentRequest === "approval") {
     return "approval";
   }
@@ -979,14 +996,19 @@ export function resolveSidebarThreadStatus(thread: SidebarThreadStatusInput): Si
   if (thread.runtime?.status === "failed") {
     return thread.runtime.lastErrorClass === "usage_limit" ? "limited" : "failed";
   }
+  // Commit / push / PR only when nothing more urgent owns the row.
+  if (options?.sourceControlStatus != null) {
+    return options.sourceControlStatus;
+  }
   return "ready";
 }
 
 /** Sidebar row status: a failure the user has already opened settles to ready, like Done. */
 export function resolveSidebarRowStatus(
   thread: ThreadStatusInput & SidebarThreadStatusInput,
+  options?: Parameters<typeof resolveSidebarThreadStatus>[1],
 ): SidebarThreadStatus {
-  const status = resolveSidebarThreadStatus(thread);
+  const status = resolveSidebarThreadStatus(thread, options);
   // A runtime failure without a failed run has nothing to date it, so it stays.
   if (status !== "failed" || thread.latestRun?.status !== "failed") return status;
   return hasUnseenRunFailure(thread) ? status : "ready";
@@ -1015,10 +1037,22 @@ export function resolveWindowTitleThreadStatus(thread: SidebarThreadStatusInput)
  * The dot on a closed boring-sidebar folder: the most urgent state among its
  * hidden threads. Waiting threads stay quiet, like their rows.
  */
-export function resolveSidebarFolderDot(
-  threads: ReadonlyArray<ThreadStatusInput & SidebarThreadStatusInput>,
+export function resolveSidebarFolderDot<
+  T extends ThreadStatusInput & SidebarThreadStatusInput = ThreadStatusInput &
+    SidebarThreadStatusInput,
+>(
+  threads: ReadonlyArray<T>,
+  options?: {
+    readonly sourceControlStatusForThread?: (
+      thread: T,
+    ) => "committing" | "pushing" | "submitting" | "merging" | null;
+  },
 ): "attention" | "failed" | "unread" | "working" | null {
-  const statuses = new Set(threads.map(resolveSidebarRowStatus));
+  const statusOf = (thread: T) =>
+    resolveSidebarRowStatus(thread, {
+      sourceControlStatus: options?.sourceControlStatusForThread?.(thread) ?? null,
+    });
+  const statuses = new Set(threads.map(statusOf));
   if (
     statuses.has("input") ||
     statuses.has("approval") ||
@@ -1030,10 +1064,19 @@ export function resolveSidebarFolderDot(
   if (statuses.has("failed")) return "failed";
   // Rows show Done only for ready threads, so the dot follows the same rule.
   const hasUnread = threads.some(
-    (thread) => resolveSidebarRowStatus(thread) === "ready" && hasUnseenCompletion(thread),
+    (thread) => statusOf(thread) === "ready" && hasUnseenCompletion(thread),
   );
   if (hasUnread) return "unread";
-  if (statuses.has("working") || statuses.has("preparing")) return "working";
+  if (
+    statuses.has("working") ||
+    statuses.has("preparing") ||
+    statuses.has("committing") ||
+    statuses.has("pushing") ||
+    statuses.has("submitting") ||
+    statuses.has("merging")
+  ) {
+    return "working";
+  }
   return null;
 }
 

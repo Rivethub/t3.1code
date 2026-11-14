@@ -71,6 +71,10 @@ export type ThreadListV2Status =
   | "input"
   | "request"
   | "working"
+  | "committing"
+  | "pushing"
+  | "submitting"
+  | "merging"
   | "waiting"
   | "failed"
   | "limited"
@@ -270,6 +274,9 @@ export function resolveThreadListV2Status(
     | "runtime"
     | "blockedOnThreadWait"
   >,
+  options?: {
+    readonly sourceControlStatus?: "committing" | "pushing" | "submitting" | "merging" | null;
+  },
 ): ThreadListV2Status {
   if (thread.hasPendingApprovals || thread.pendingSubagentRequest === "approval") {
     return "approval";
@@ -296,6 +303,10 @@ export function resolveThreadListV2Status(
   if (thread.runtime?.status === "failed") {
     return thread.runtime.lastErrorClass === "usage_limit" ? "limited" : "failed";
   }
+  // Commit / push / PR only when nothing more urgent owns the row.
+  if (options?.sourceControlStatus != null) {
+    return options.sourceControlStatus;
+  }
   return "ready";
 }
 
@@ -303,8 +314,9 @@ export function resolveThreadListV2Status(
 export function resolveThreadListV2RowStatus(
   thread: Parameters<typeof resolveThreadListV2Status>[0] &
     Pick<EnvironmentThreadShell, "latestRun" | "lastVisitedAt">,
+  options?: Parameters<typeof resolveThreadListV2Status>[1],
 ): ThreadListV2Status {
-  const status = resolveThreadListV2Status(thread);
+  const status = resolveThreadListV2Status(thread, options);
   // A runtime failure without a failed run has nothing to date it, so it stays.
   if (status !== "failed" || thread.latestRun?.status !== "failed") return status;
   return hasUnseenRunFailure(thread) ? status : "ready";

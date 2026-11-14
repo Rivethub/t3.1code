@@ -25,6 +25,7 @@ import {
   formatWorkingDurationLabel,
   resolveThreadWorkingStartedAt,
 } from "@t3tools/client-runtime/state/models";
+import { resolveSourceControlThreadStatus } from "@t3tools/client-runtime/state/vcs";
 import {
   AuthOrchestrationOperateScope,
   type EnvironmentId,
@@ -35,6 +36,7 @@ import type { SnoozePresetSetting } from "@t3tools/contracts/settings";
 import { canSnooze } from "@t3tools/client-runtime/state/thread-settled";
 import { threadChipCopyTarget } from "@t3tools/client-runtime/thread-reference";
 import type { MenuAction } from "@react-native-menu/menu";
+import { useAtomValue } from "@effect/atom-react";
 import { memo, useCallback, useMemo, useState, type ComponentProps } from "react";
 import { Platform, Pressable, Text as RNText, useWindowDimensions, View } from "react-native";
 import type { SwipeableMethods } from "react-native-gesture-handler/ReanimatedSwipeable";
@@ -62,6 +64,7 @@ import {
   resolvePendingDraftBranch,
 } from "../../state/pending-new-tasks-model";
 import { useBranches } from "../../state/queries";
+import { vcsActionManager } from "../../state/vcs";
 import { useNewTaskProjectDefaults } from "./use-new-task-project-defaults";
 import {
   resolveThreadPrBadgeAction,
@@ -121,6 +124,30 @@ const STATUS_LABEL_BY_STATUS: Partial<Record<ThreadListV2Status, StatusLabel>> =
   },
   working: {
     label: null,
+    icon: "circle.dashed",
+    className: "text-adaptive-sky-600-400",
+    iconTintClassName: "accent-adaptive-sky-600-400",
+  },
+  committing: {
+    label: "Committing",
+    icon: "circle.dashed",
+    className: "text-adaptive-sky-600-400",
+    iconTintClassName: "accent-adaptive-sky-600-400",
+  },
+  pushing: {
+    label: "Pushing",
+    icon: "circle.dashed",
+    className: "text-adaptive-sky-600-400",
+    iconTintClassName: "accent-adaptive-sky-600-400",
+  },
+  submitting: {
+    label: "Submitting",
+    icon: "circle.dashed",
+    className: "text-adaptive-sky-600-400",
+    iconTintClassName: "accent-adaptive-sky-600-400",
+  },
+  merging: {
+    label: "Merging",
     icon: "circle.dashed",
     className: "text-adaptive-sky-600-400",
     iconTintClassName: "accent-adaptive-sky-600-400",
@@ -773,15 +800,27 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   const selected = props.selected === true;
   const rowAppearance = getThreadListV2RowAppearance(theme, sidebarPane, selected);
 
-  const rawStatus = resolveThreadListV2Status(thread);
-  const status = resolveThreadListV2RowStatus(thread);
+  const stackedAction = useAtomValue(
+    vcsActionManager.stackedActionThreadAtom(thread.environmentId, thread.id),
+  );
+  const sourceControlStatus = resolveSourceControlThreadStatus(stackedAction);
+  const rawStatus = resolveThreadListV2Status(thread, { sourceControlStatus });
+  const status = resolveThreadListV2RowStatus(thread, { sourceControlStatus });
   const isUnread = status === "ready" && threadHasUnseenCompletion(thread);
+  const isSourceControlStatus =
+    status === "committing" ||
+    status === "pushing" ||
+    status === "submitting" ||
+    status === "merging";
   const workingLabel = STATUS_LABEL_BY_STATUS[status];
   const showsWoke = status === "ready" && props.wokeAt !== null;
   const statusLabel =
     (status === "working" && workingLabel !== undefined && thread.goal?.status === "active"
       ? { ...workingLabel, label: "Goal" }
       : workingLabel) ?? (isUnread ? DONE_STATUS_LABEL : undefined);
+  const workingStartedAt =
+    resolveThreadWorkingStartedAt(thread) ??
+    (stackedAction === undefined ? null : new Date(stackedAction.startedAtMs).toISOString());
   const recede = shouldRecedeThreadRow({ status, selected });
   const isRegeneratingTitle = thread.titleRegeneration != null;
   const rowAccessibilityLabel = `${thread.title}${providerNameLabel ? `, ${providerNameLabel}` : ""}${props.hasQueuedMessages ? ", messages queued to send" : ""}${isRegeneratingTitle ? ", regenerating title" : ""}`;
@@ -1256,14 +1295,16 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
               <Text
                 className={cn(
                   "text-xs font-t3-bold",
+                  (status === "working" || isSourceControlStatus || status === "waiting") &&
+                    "tabular-nums",
                   selected ? selectedThreadRowColors.foregroundClassName : statusLabel.className,
                 )}
               >
                 {statusLabel.label}
-                {status === "working" ? (
+                {status === "working" || isSourceControlStatus ? (
                   <ThreadListV2Duration
                     environmentId={thread.environmentId}
-                    startedAt={resolveThreadWorkingStartedAt(thread)}
+                    startedAt={workingStartedAt}
                     leadingSpace={statusLabel.label !== null}
                   />
                 ) : status === "waiting" ? (
