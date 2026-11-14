@@ -28,7 +28,7 @@ import {
   type ComponentProps,
   type ReactNode,
 } from "react";
-import { StyleSheet, View } from "react-native";
+import { StyleSheet, useWindowDimensions, View } from "react-native";
 import { Split, type SplitHostCommands } from "react-native-screens";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
@@ -40,6 +40,10 @@ import {
   WorkspaceNativeTabs,
   WorkspaceSidebarTabsFooter,
 } from "./workspace/WorkspaceNativeTabs.ios";
+import {
+  useCompactWorkspaceTabs,
+  useFloatingWorkspaceTabs,
+} from "./workspace/useSystemWorkspaceTabBar";
 import { workspaceUsesColumns } from "./workspace/workspace-tabs-state";
 import { isSettingsRoute, settingsOpenIn } from "../settings/settings-navigation";
 import { workspaceRoutesOf } from "./workspace-overlay-routes";
@@ -501,19 +505,46 @@ function WorkspaceColumns(
   );
 }
 
+function CardStackDock() {
+  const deviceType = useDeviceType();
+  const { layout } = useAdaptiveWorkspaceLayout();
+  const floatingTabs = useFloatingWorkspaceTabs();
+  const { width } = useWindowDimensions();
+  return (
+    <View
+      pointerEvents="box-none"
+      style={{
+        position: "absolute",
+        left: 0,
+        bottom: 0,
+        // UIKit can shrink the sidebar to 280pt independently of its preferred width.
+        width:
+          deviceType === "pad" && (floatingTabs || layout.usesSplitView)
+            ? Math.min(280, layout.listPaneWidth ?? width, width)
+            : (layout.listPaneWidth ?? width),
+        height: 128,
+      }}
+    >
+      <WorkspaceSidebarTabsFooter />
+    </View>
+  );
+}
+
 function WorkspaceStackView(props: ViewProps & { readonly nativeColumns: boolean }) {
   const { layout } = useAdaptiveWorkspaceLayout();
+  const { panes } = useWorkspacePaneState();
   const deviceType = useDeviceType();
   const workspace = useWorkspaceTabs()!;
-  // Native dismiss commits the route pop after the transition. Restore the dock
+  const compactTabs = useCompactWorkspaceTabs();
+  // Native dismiss commits the route pop after the transition. Restore the system tab bar
   // when the primary screen starts appearing, including interactive back gestures.
   const [primaryVisible, setPrimaryVisible] = useState(false);
   const metrics = useNativeLayoutMetrics();
   const projection = projectWorkspaceStack(props.state, (route) => {
     return isPresentedRoute(props.descriptors[route.key]?.options);
   });
-  // The root's willDisappear reaches JS frames into the push, so hide the dock in the commit that
-  // pushes; the native events still own every later change, including back gestures.
+  // The root's willDisappear reaches JS frames into the push, so hide the system tab bar in the
+  // commit that pushes; the native events still own every later change, including back gestures.
   const topDetailKey = projection.detail.at(-1)?.key;
   const [pushedDetailKey, setPushedDetailKey] = useState(topDetailKey);
   if (pushedDetailKey !== topDetailKey) {
@@ -528,6 +559,21 @@ function WorkspaceStackView(props: ViewProps & { readonly nativeColumns: boolean
   const baseRoute = { key: `${props.state.key}:workspace`, name: "Workspace" };
   const visibleRoute = projection.detail.at(-1) ?? primaryRoute;
   const workspacePage = !workspaceUsesColumns(workspace.state.selectedTab, workspace.settingsOpen);
+  const tabsInSidebarColumn = props.nativeColumns && !workspacePage && deviceType === "pad";
+  // Keep the floating dock on the root card so a back swipe reveals it under the leaving screen
+  // instead of mounting an overlay mid-gesture or after the transition settles. Column layouts put
+  // the same footer on the sidebar screen instead. Medium Usage is a page (no columns), so it still
+  // needs this dock; medium Chats/PRs use the sidebar toolbar.
+  const cardStackDock =
+    !tabsInSidebarColumn &&
+    (deviceType === "pad" || compactTabs || (layout.variant === "medium" && workspacePage));
+  // Pre-iPadOS 26 JS split keeps the sidebar beside a covered root, so the dock must stay above
+  // the detail. Non-split stacks use the root-card footer for the interactive back swipe.
+  const dockUnderLeavingCard = cardStackDock && !layout.usesSplitView;
+  const dockAboveStack =
+    cardStackDock &&
+    layout.usesSplitView &&
+    !(deviceType === "pad" && !workspacePage && !panes.primarySidebarVisible);
   const baseDescriptor: Descriptor = {
     ...primaryDescriptor,
     navigation: props.descriptors[visibleRoute.key]!.navigation,
@@ -536,7 +582,6 @@ function WorkspaceStackView(props: ViewProps & { readonly nativeColumns: boolean
     options: { headerShown: false },
     render: () => (
       <WorkspaceNativeTabs
-        tabsInSidebarColumn={props.nativeColumns && !workspacePage && deviceType === "pad"}
         hidden={
           !workspacePage &&
           projection.detail.length > 0 &&
@@ -553,18 +598,22 @@ function WorkspaceStackView(props: ViewProps & { readonly nativeColumns: boolean
             detail={projection.detail}
           />
         ) : (
-          <V5CardStackView
-            {...props}
-            onRootVisibilityChange={setPrimaryVisible}
-            onNativePopChange={setNativelyPoppingWorkspaceRoute}
-            descriptors={descriptors}
-            state={{
-              ...props.state,
-              routes: [primaryRoute, ...projection.detail],
-              index: projection.detail.length,
-              preloadedRoutes: [],
-            }}
-          />
+          <View style={{ flex: 1 }}>
+            <V5CardStackView
+              {...props}
+              rootFooter={dockUnderLeavingCard ? <CardStackDock /> : undefined}
+              onRootVisibilityChange={setPrimaryVisible}
+              onNativePopChange={setNativelyPoppingWorkspaceRoute}
+              descriptors={descriptors}
+              state={{
+                ...props.state,
+                routes: [primaryRoute, ...projection.detail],
+                index: projection.detail.length,
+                preloadedRoutes: [],
+              }}
+            />
+            {dockAboveStack ? <CardStackDock /> : null}
+          </View>
         )}
       </WorkspaceNativeTabs>
     ),
