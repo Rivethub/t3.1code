@@ -346,6 +346,7 @@ export function ProposedPlanTimelineRow({
   row: Extract<TimelineRow, { kind: "proposed-plan" }>;
 }) {
   const ctx = use(TimelineRowCtx);
+  const onBuildProposedPlan = ctx.onBuildProposedPlan;
 
   return (
     <div className="min-w-0 px-1 py-0.5">
@@ -356,6 +357,20 @@ export function ProposedPlanTimelineRow({
         cwd={ctx.markdownCwd}
         workspaceRoot={ctx.workspaceRoot}
         findActive={ctx.findActive}
+        canBuild={
+          ctx.canOperateThread &&
+          row.proposedPlan.status === "active" &&
+          !ctx.isProposedPlanBuildBusy
+        }
+        onBuild={
+          onBuildProposedPlan
+            ? () =>
+                onBuildProposedPlan({
+                  id: row.proposedPlan.id,
+                  planMarkdown: row.proposedPlan.planMarkdown,
+                })
+            : undefined
+        }
       />
     </div>
   );

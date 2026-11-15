@@ -34,6 +34,7 @@ import { useRightPanelActions } from "./chat/useRightPanelActions";
 import { type TerminalLaunchContext, useChatTerminalActions } from "./chat/useChatTerminalActions";
 import { useComposerSend } from "./chat/useComposerSend";
 import { useComposerResume } from "./chat/useComposerResume";
+import { useBuildProposedPlan } from "./chat/useProposedPlanSend";
 import { ThreadFind, ThreadFindCanvas } from "./chat/ThreadFindProvider";
 import { closeThreadFind, openThreadFind, useThreadFindOpen } from "./chat/threadFindStore";
 import { THREAD_FIND_BAR_RESERVED_HEIGHT } from "./chat/ThreadFindBar";
@@ -1505,6 +1506,8 @@ export default function ChatView(props: ChatViewProps) {
     isCompacting,
     runlessWorkStartedAt,
   });
+  // Connecting outlives isSendBusy after the server acks a Build, so Build must stay blocked.
+  const isProposedPlanBuildBusy = isWorking || phase === "connecting" || isRevertingCheckpoint;
   const activeContextWindow = deriveLatestContextWindowSnapshot(
     serverVisibleTurnItems ?? [],
     activeThreadLiveTokenUsage,
@@ -2927,6 +2930,22 @@ export default function ChatView(props: ChatViewProps) {
     scrollToEnd,
     setThreadError,
   });
+  const onBuildProposedPlan = useBuildProposedPlan({
+    environmentId,
+    routeThreadKey,
+    activeThread,
+    isServerThread,
+    isSendBusy: isProposedPlanBuildBusy,
+    composerRef,
+    beginLocalDispatch,
+    resetLocalDispatch,
+    runtimeMode,
+    localCheckoutBranchMismatch,
+    setOptimisticUserMessages,
+    setThreadError,
+    anchorNewTurn,
+    persistThreadSettingsForNextTurn,
+  });
   const { onSend } = useComposerSend({
     environmentId,
     routeThreadKey,
@@ -3013,6 +3032,7 @@ export default function ChatView(props: ChatViewProps) {
     });
   };
   const onWorktreeSetupWorkLocallyStable = useStableCallback(onWorktreeSetupWorkLocally);
+  const onBuildProposedPlanStable = useStableCallback(onBuildProposedPlan);
   const onComposerSendStable = useStableCallback(onSend);
   const sendPreviewAnnotation = (
     annotation: PreviewAnnotationPayload,
@@ -3508,6 +3528,8 @@ export default function ChatView(props: ChatViewProps) {
                   onRevertToTurnCount={onRevertTimelineTurnStable}
                   onUseArtifactTemplate={insertArtifactTemplateStable}
                   onSendAppMessage={sendAppMessageStable}
+                  onBuildProposedPlan={onBuildProposedPlanStable}
+                  isProposedPlanBuildBusy={isProposedPlanBuildBusy}
                   isRevertingCheckpoint={isRevertingCheckpoint}
                   onImageExpand={onExpandTimelineImageStable}
                   onFileOpen={openFileAttachmentStable}
