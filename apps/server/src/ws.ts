@@ -9,6 +9,7 @@ import * as Orchestrator from "./orchestration-v2/Orchestrator.ts";
 import * as PeerLinkRequests from "./peer/PeerLinkRequests.ts";
 import * as PeerLinks from "./peer/PeerLinks.ts";
 
+import * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Base64 from "effect/encoding/Base64";
@@ -44,6 +45,7 @@ import {
   type FileManagerRevealKind,
   type OrchestrationV2Command,
   type GitActionProgressEvent,
+  type GitActionProgressPhase,
   type GitManagerServiceError,
   type MessageId,
   type AcpRegistryDeleteSessionInput,
@@ -218,6 +220,7 @@ import * as VcsProvisioningService from "./vcs/VcsProvisioningService.ts";
 import * as GitWorkflowService from "./git/GitWorkflowService.ts";
 import { refreshPushedPullRequests } from "./git/refreshPushedPullRequests.ts";
 import { linkCreatedPullRequest } from "./git/linkCreatedPullRequest.ts";
+import { sendGitActionFailureToAgent } from "./git/sendGitActionFailureToAgent.ts";
 import * as ReviewService from "./review/ReviewService.ts";
 import * as ProjectEnrichmentService from "./project/ProjectEnrichmentService.ts";
 import * as ProjectService from "./project/ProjectService.ts";
@@ -3127,19 +3130,59 @@ export const layerWsRpc = (
             }),
           ),
         [WS_METHODS.gitRunStackedAction]: (input) =>
-          Stream.callback<GitActionProgressEvent, GitManagerServiceError>((queue) =>
-            gitWorkflow
+          Stream.callback<GitActionProgressEvent, GitManagerServiceError>((queue) => {
+            let failedPhase: GitActionProgressPhase | null = null;
+            let failedMessage: string | null = null;
+            return gitWorkflow
               .runStackedAction(input, {
                 actionId: input.actionId,
                 progressReporter: {
-                  publish: (event) => Queue.offer(queue, event).pipe(Effect.asVoid),
+                  publish: (event) => {
+                    if (event.kind === "action_failed") {
+                      failedPhase = event.phase;
+                      failedMessage = event.message;
+                    }
+                    return Queue.offer(queue, event).pipe(Effect.asVoid);
+                  },
                 },
               })
               .pipe(
                 Effect.matchCauseEffect({
-                  // Earlier steps (branch, commit) may have landed before the failing one.
-                  onFailure: (cause) =>
-                    refreshGitStatus(input.cwd).pipe(Effect.andThen(Queue.failCause(queue, cause))),
+                  onFailure: (cause) => {
+                    const failure = Cause.findErrorOption(cause);
+                    const detail =
+                      failedMessage ??
+                      (Option.isSome(failure) && failure.value instanceof Error
+                        ? failure.value.message
+                        : "Source control action failed.");
+                    // Stacked actions only need source-control write; waking the agent needs operate.
+                    // Detach the wake so a slow dispatch cannot hold the progress stream open
+                    // (client keeps isRunning until the stream ends).
+                    return (
+                      input.threadId === undefined ||
+                      !currentSession.scopes.includes(AuthOrchestrationOperateScope)
+                        ? Effect.void
+                        : sendGitActionFailureToAgent({
+                            threadId: input.threadId,
+                            action: input.action,
+                            phase: failedPhase,
+                            detail,
+                            commandId: serverCommandId("git-action-failure"),
+                          }).pipe(
+                            Effect.provideService(Orchestrator.OrchestratorV2, orchestrationEngine),
+                            Effect.provideService(
+                              ServerSettings.ServerSettingsService,
+                              serverSettings,
+                            ),
+                            Effect.provideService(SecureRandom.SecureRandom, random),
+                          )
+                    ).pipe(
+                      Effect.forkDetach,
+                      // Earlier steps (branch, commit) may have landed before the failing one.
+                      Effect.andThen(refreshGitStatus(input.cwd)),
+                      Effect.ensuring(Queue.failCause(queue, cause)),
+                    );
+                  },
                   onSuccess: (result) =>
                     (input.threadId === undefined
                       ? Effect.void
@@ -3166,8 +3209,8 @@ export const layerWsRpc = (
                       Effect.andThen(Queue.end(queue).pipe(Effect.asVoid)),
                     ),
                 }),
-              ),
-          ),
+              );
+          }),
         [WS_METHODS.gitResolvePullRequest]: (input) => gitWorkflow.resolvePullRequest(input),
         [WS_METHODS.gitPreparePullRequestThread]: (input) =>
           gitWorkflow
