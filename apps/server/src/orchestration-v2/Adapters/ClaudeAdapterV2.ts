@@ -184,6 +184,8 @@ import * as ServerConfig from "../../config.ts";
 import * as PortScanner from "../../preview/PortScanner.ts";
 import * as ProcessRunner from "../../processRunner.ts";
 import * as ServerSettings from "../../serverSettings.ts";
+import { projectGitHubEnvironment } from "../../sourceControl/projectGitHubEnvironment.ts";
+import * as SourceControlHost from "@t3tools/source-control-core/server/SourceControlHost";
 import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
 import { spawnAndCollect } from "@t3tools/provider-core/server/snapshotProbe";
 import { signalProcessGroup } from "@t3tools/provider-core/server/processGroup";
@@ -12702,6 +12704,22 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             turnInput.nativeThreadHasTurns ?? turnInput.providerTurnOrdinal > 1;
           const shouldResume =
             resumeSessionAt !== undefined || openedWithResume || hasPersistedProviderTurn;
+          const sourceControlHost = yield* Effect.serviceOption(
+            SourceControlHost.SourceControlHost,
+          );
+          const projectGitHubEnv =
+            Option.isNone(serverSettings) || Option.isNone(sourceControlHost)
+              ? {}
+              : yield* serverSettings.value.getSettings.pipe(
+                  Effect.flatMap((settings) =>
+                    projectGitHubEnvironment(settings, turnInput.appThread.projectId),
+                  ),
+                  Effect.provideService(
+                    SourceControlHost.SourceControlHost,
+                    sourceControlHost.value,
+                  ),
+                  Effect.orElseSucceed((): NodeJS.ProcessEnv => ({})),
+                );
           const queryOptions = makeClaudeQueryOptions({
             modelSelection: turnInput.modelSelection,
             modelCatalog: catalog,
@@ -12718,14 +12736,17 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             ...(launchArgSettings === undefined
               ? {}
               : { sdkSettings: claudeSdkLaunchArgSettings(launchArgSettings) }),
-            environment: claudeQueryEnvironment(
-              adapterOptions.environment,
-              turnInput.appThread,
-              turnInput.appThread.lineage.relationshipToParent === "subagent"
-                ? yield* resolveSubagentPromptCacheTtl(turnInput.runtimePolicy.cwd)
-                : undefined,
-              shouldResume,
-            ),
+            environment: {
+              ...claudeQueryEnvironment(
+                adapterOptions.environment,
+                turnInput.appThread,
+                turnInput.appThread.lineage.relationshipToParent === "subagent"
+                  ? yield* resolveSubagentPromptCacheTtl(turnInput.runtimePolicy.cwd)
+                  : undefined,
+                shouldResume,
+              ),
+              ...projectGitHubEnv,
+            },
             tools: queryPolicy.tools ?? CLAUDE_CODE_PRESET_TOOLS,
             ...(mcpOverrides.allowedTools === undefined
               ? {}
