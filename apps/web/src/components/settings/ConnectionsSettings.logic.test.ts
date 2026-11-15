@@ -4,11 +4,79 @@ import {
   applyWslEnableSelection,
   isServerNetworkAccessible,
   parseManualDesktopSshTarget,
+  hostUsesGatewayPath,
+  parsePairingUrlFields,
+  parseRemotePairingFields,
   resolveAccessEnvironmentId,
   resolveTailscaleServeBaseUrl,
   selectQrEndpointOption,
+  shouldUseGatewayPairPrefill,
   togglePairingScopeSelection,
 } from "./ConnectionsSettings.logic";
+
+describe("hostUsesGatewayPath", () => {
+  it("detects a LAN gateway peer path and ignores a direct host", () => {
+    expect(hostUsesGatewayPath("https://gateway.example/__t3_gateway/env_peer/")).toBe(true);
+    expect(hostUsesGatewayPath("gateway.example/__t3_gateway/env_peer")).toBe(true);
+    expect(hostUsesGatewayPath("https://desk.example/")).toBe(false);
+    expect(hostUsesGatewayPath("desk.example")).toBe(false);
+  });
+});
+
+describe("shouldUseGatewayPairPrefill", () => {
+  const prefill = "https://gateway.example/__t3_gateway/env_peer/";
+
+  it("keeps the hop id only for the same gateway origin", () => {
+    expect(
+      shouldUseGatewayPairPrefill({
+        submittedHost: prefill,
+        prefillHost: prefill,
+      }),
+    ).toBe(true);
+    expect(
+      shouldUseGatewayPairPrefill({
+        submittedHost: "https://gateway.example/__t3_gateway/env_other/",
+        prefillHost: prefill,
+      }),
+    ).toBe(true);
+    expect(
+      shouldUseGatewayPairPrefill({
+        submittedHost: "https://desk.example/",
+        prefillHost: prefill,
+      }),
+    ).toBe(false);
+    expect(
+      shouldUseGatewayPairPrefill({
+        submittedHost: "https://evil.example/__t3_gateway/env_peer/",
+        prefillHost: prefill,
+      }),
+    ).toBe(false);
+  });
+});
+
+describe("parsePairingUrlFields", () => {
+  it("keeps a LAN gateway peer path when extracting a pairing token URL", () => {
+    expect(
+      parsePairingUrlFields("https://gateway.example/__t3_gateway/env_peer/#token=PAIRCODE"),
+    ).toEqual({
+      host: "https://gateway.example/__t3_gateway/env_peer/",
+      pairingCode: "PAIRCODE",
+    });
+    expect(
+      parseRemotePairingFields({
+        host: "https://gateway.example/__t3_gateway/env_peer/#token=PAIRCODE",
+        pairingCode: "",
+      }),
+    ).toEqual({
+      host: "https://gateway.example/__t3_gateway/env_peer/",
+      pairingCode: "PAIRCODE",
+    });
+    expect(parsePairingUrlFields("https://desk.example/#token=PAIRCODE")).toEqual({
+      host: "https://desk.example",
+      pairingCode: "PAIRCODE",
+    });
+  });
+});
 
 describe("togglePairingScopeSelection", () => {
   it.each([

@@ -10,6 +10,7 @@ import * as RemoteEnvironmentAuthorization from "../authorization/service.ts";
 import * as RpcSession from "../rpc/session.ts";
 import type { ConnectionCatalogEntry } from "./catalog.ts";
 import * as ConnectionDriver from "./driver.ts";
+import * as GatewayHop from "./gatewayHop.ts";
 import { ConnectionTransientError, SshConnectionTarget, type PreparedConnection } from "./model.ts";
 import * as ConnectionResolver from "./resolver.ts";
 
@@ -52,6 +53,7 @@ describe("ConnectionDriver", () => {
                 ),
             }),
             Layer.mock(RemoteEnvironmentAuthorization.RemoteEnvironmentAuthorization)({}),
+            Layer.mock(GatewayHop.GatewayHopAuthorization)({}),
             // SSH routes have no HTTP check, so the driver never sends a request.
             FetchHttpClient.layer,
           ),

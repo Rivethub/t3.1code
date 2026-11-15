@@ -15,6 +15,8 @@ import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 import * as Tracer from "effect/Tracer";
 
+import type { LanGatewayPeerAdvertisement } from "@t3tools/contracts";
+
 import type { ConnectionCatalogEntry, ConnectionRoute } from "./catalog.ts";
 import * as Connectivity from "./connectivity.ts";
 import * as ConnectionDriver from "./driver.ts";
@@ -26,6 +28,7 @@ import {
   type PreparedConnection,
   type SupervisorConnectionState,
 } from "./model.ts";
+import type { WsRpcProtocolClient } from "../rpc/protocol.ts";
 import * as RpcSession from "../rpc/session.ts";
 import { safeErrorLogAttributes } from "../errors/safeLog.ts";
 import { NETWORK_BLOCKING_HINT } from "../errors/network.ts";
@@ -146,10 +149,22 @@ function exitUnlessInterrupted<A, E, R>(
 
 export interface EnvironmentSupervisorOptions {
   readonly initiallyDesired?: boolean;
+  /** Lets the registry hand over routes learned outside this supervisor's own session. */
+  readonly currentEntry?: Ref.Ref<ConnectionCatalogEntry>;
   readonly learnRoutes?: (input: {
     readonly activeRoute: ConnectionRoute;
     readonly reported: ReadonlyArray<ReportedEndpoint>;
   }) => Effect.Effect<Option.Option<ConnectionCatalogEntry>>;
+  /** Apply LAN-gateway advertisements from this connected host onto peer catalog entries. */
+  readonly learnGatewayPeers?: (input: {
+    readonly gatewayHttpBaseUrl: string;
+    readonly advertised: ReadonlyArray<LanGatewayPeerAdvertisement>;
+  }) => Effect.Effect<void>;
+  /** When this host's LAN gateway is on, publish its RPC client for catalog peer reconcile. */
+  readonly publishGatewayReconcile?: (input: {
+    readonly enabled: boolean;
+    readonly client: WsRpcProtocolClient;
+  }) => Effect.Effect<void>;
 }
 
 function retryDelayMs(failureCount: number, random: number): number {
@@ -321,7 +336,7 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
   const prepared = yield* SubscriptionRef.make<Option.Option<PreparedConnection>>(Option.none());
   // Learned routes arrive while a session is live, so the route list is read
   // fresh by each attempt and check instead of being fixed at creation.
-  const currentEntry = yield* Ref.make(entry);
+  const currentEntry = options?.currentEntry ?? (yield* Ref.make(entry));
   const currentRoutes = Ref.get(currentEntry).pipe(Effect.map(connectionRoutes));
   const preferredRouteId = yield* Ref.make(Option.none<string>());
   const routeCooldowns = yield* Ref.make<ReadonlyMap<string, bigint>>(new Map());
@@ -362,13 +377,47 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
       Stream.changesWith((previous, next) => JSON.stringify(previous) === JSON.stringify(next)),
       Stream.runForEach((reported) =>
         Effect.gen(function* () {
+          // learnRoutes writes currentEntry under the registry lease lock. Do not
+          // set it from the returned snapshot here: a gateway update can land
+          // between unlock and this write and would be overwritten.
           const updated = yield* learn({ activeRoute, reported });
           if (Option.isSome(updated)) {
-            yield* Ref.set(currentEntry, updated.value);
             yield* requestBetterRouteCheck(lease);
           }
         }),
       ),
+      Effect.ignoreCause({ log: true }),
+    );
+  });
+
+  const learnGatewayPeersFrom = Effect.fnUntraced(function* (
+    learn: NonNullable<EnvironmentSupervisorOptions["learnGatewayPeers"]>,
+    lease: ConnectedLease,
+  ) {
+    // Include the live gateway origin so a reconnect on a new host rewrites peer routes even when
+    // the advertisement list is unchanged.
+    yield* lease.session.subscribeServerConfig().pipe(
+      Stream.filter((event) => event.type === "snapshot"),
+      Stream.map((event) => ({
+        advertised: event.config.lanGatewayPeers ?? [],
+        gatewayHttpBaseUrl: lease.prepared.httpBaseUrl,
+      })),
+      Stream.changesWith((previous, next) => JSON.stringify(previous) === JSON.stringify(next)),
+      Stream.runForEach((snapshot) => learn(snapshot)),
+      Effect.ignoreCause({ log: true }),
+    );
+  });
+
+  const publishGatewayReconcileFrom = Effect.fnUntraced(function* (
+    publish: NonNullable<EnvironmentSupervisorOptions["publishGatewayReconcile"]>,
+    lease: ConnectedLease,
+  ) {
+    yield* lease.session.subscribeServerConfig().pipe(
+      Stream.filter((event) => event.type === "snapshot"),
+      Stream.map((event) => event.config.settings?.lanGatewayEnabled === true),
+      Stream.changes,
+      Stream.runForEach((enabled) => publish({ enabled, client: lease.session.client })),
+      Effect.ensuring(publish({ enabled: false, client: lease.session.client })),
       Effect.ignoreCause({ log: true }),
     );
   });
@@ -1037,6 +1086,16 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
     yield* SubscriptionRef.set(session, Option.some(connectedLease.session));
     if (options?.learnRoutes !== undefined) {
       yield* learnRoutesFrom(options.learnRoutes, connectedLease).pipe(Effect.forkScoped);
+    }
+    if (options?.learnGatewayPeers !== undefined) {
+      yield* learnGatewayPeersFrom(options.learnGatewayPeers, connectedLease).pipe(
+        Effect.forkScoped,
+      );
+    }
+    if (options?.publishGatewayReconcile !== undefined) {
+      yield* publishGatewayReconcileFrom(options.publishGatewayReconcile, connectedLease).pipe(
+        Effect.forkScoped,
+      );
     }
     yield* setState({
       desired: true,

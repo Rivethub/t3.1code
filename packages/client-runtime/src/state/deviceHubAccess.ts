@@ -9,10 +9,12 @@ import * as Redacted from "effect/Redacted";
 import type { HttpClient } from "effect/http";
 
 import * as RemoteEnvironmentAuthorization from "../authorization/service.ts";
-import type { PreparedConnection } from "../connection/model.ts";
-import { environmentEndpointUrl } from "../environment/endpoint.ts";
+import { ticketedEnvironmentEndpointUrl, type PreparedConnection } from "../connection/model.ts";
 import * as ManagedRelay from "../relay/managedRelay.ts";
-import type { RemoteEnvironmentRequestError } from "../rpc/http.ts";
+import {
+  RemoteEnvironmentAuthFetchError,
+  type RemoteEnvironmentRequestError,
+} from "../rpc/http.ts";
 import { executeAuthenticatedEnvironmentHttpRequest } from "./environmentHttpAuth.ts";
 import type { DeviceHubAccess } from "../device/hubAccess.ts";
 
@@ -20,15 +22,35 @@ export { type DeviceHubAccess, withDeviceHubQuery } from "../device/hubAccess.ts
 
 const TICKET_TIMEOUT_MS = 8_000;
 
+const hopUrlFailed = (detail: string, cause: unknown) =>
+  new RemoteEnvironmentAuthFetchError({ message: detail, cause });
+
 export const resolveDeviceHubAccess = Effect.fn("clientRuntime.state.resolveDeviceHubAccess")(
   function* (input: {
     readonly prepared: PreparedConnection;
     readonly hubBasePath: string;
   }): Effect.fn.Return<DeviceHubAccess, RemoteEnvironmentRequestError, HttpClient.HttpClient> {
-    const httpBase = environmentEndpointUrl(input.prepared.httpBaseUrl, input.hubBasePath);
+    const ticketedUrl = yield* ticketedEnvironmentEndpointUrl(
+      input.prepared,
+      input.hubBasePath,
+    ).pipe(
+      Effect.mapError((error) =>
+        hopUrlFailed(
+          error._tag === "ConnectionTransientError" || error._tag === "ConnectionBlockedError"
+            ? error.detail
+            : "Could not prepare the device hub URL.",
+          error,
+        ),
+      ),
+    );
+    const base = new URL(ticketedUrl);
+    const gatewayTicket = base.searchParams.get("gatewayTicket");
+    const query: DeviceHubAccess["query"] = gatewayTicket === null ? {} : { gatewayTicket };
+    base.search = "";
+    const httpBase = base.toString();
     const wsBase = httpBase.replace(/^http/, "ws");
     if (input.prepared.httpAuthorization === null) {
-      return { httpBase, wsBase, query: {}, credentials: true };
+      return { httpBase, wsBase, query, credentials: true };
     }
     const signer = yield* Effect.serviceOption(ManagedRelay.ManagedRelayDpopSigner);
     const remoteAuthorization = yield* Effect.serviceOption(
@@ -48,7 +70,7 @@ export const resolveDeviceHubAccess = Effect.fn("clientRuntime.state.resolveDevi
     return {
       httpBase,
       wsBase,
-      query: { wsTicket: Redacted.value(ticket.ticket) },
+      query: { ...query, wsTicket: Redacted.value(ticket.ticket) },
       credentials: false,
     };
   },

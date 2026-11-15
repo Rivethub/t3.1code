@@ -23,6 +23,7 @@ export function LabsSettingsPanel() {
         {hasCloudPublicConfig() ? <GuestLinksRowWithSignIn /> : <GuestLinksRow />}
         <LinkedEnvironmentsRow />
         <PromptSuggestionsRow />
+        <LanGatewayRow />
         <SimlockHostsRow />
         <FastWorktreeCheckoutRow />
       </SettingsSection>
@@ -184,6 +185,27 @@ function PromptSuggestionsRow() {
             updateSettings({ promptSuggestionsEnabled: Boolean(checked) })
           }
           aria-label="Suggest next prompt"
+        />
+      }
+    />
+  );
+}
+
+function LanGatewayRow() {
+  const settings = useScopedSettings();
+  const updateSettings = useUpdateScopedSettings();
+  return (
+    <SettingsRow
+      serverScoped
+      {...searchableSetting("lan-gateway-beta")}
+      settingKeys={["lanGatewayEnabled"]}
+      description="Reverse-proxy other enabled environments on this device through T3 Connect. Pair those peers on the LAN once; remote clients discover them automatically."
+      control={
+        <ScopedSwitch
+          settingKeys={["lanGatewayEnabled"]}
+          checked={settings.lanGatewayEnabled}
+          onCheckedChange={(checked) => updateSettings({ lanGatewayEnabled: Boolean(checked) })}
+          aria-label="LAN gateway"
         />
       }
     />

@@ -10,8 +10,13 @@ import { withRelayClientTracing } from "@t3tools/shared/relayTracing";
 import { FetchHttpClient, type HttpMethod } from "effect/http";
 
 import * as RemoteEnvironmentAuthorization from "../authorization/service.ts";
-import type { PreparedConnection, PreparedHttpAuthorization } from "../connection/model.ts";
+import {
+  ticketedHttpBaseUrl,
+  type PreparedConnection,
+  type PreparedHttpAuthorization,
+} from "../connection/model.ts";
 import * as EnvironmentSupervisor from "../connection/supervisor.ts";
+import { withGatewayTicket } from "../environment/endpoint.ts";
 import * as ManagedRelay from "../relay/managedRelay.ts";
 import {
   executeEnvironmentHttpRequest,
@@ -147,7 +152,7 @@ const executeEnvironmentRequest = Effect.fnUntraced(function* <
 >(input: {
   readonly prepared: Pick<
     PreparedConnection,
-    "environmentId" | "httpBaseUrl" | "httpAuthorization" | "target"
+    "environmentId" | "httpBaseUrl" | "httpAuthorization" | "target" | "gatewayTicket"
   >;
   readonly signer: Option.Option<ManagedRelay.ManagedRelayDpopSigner["Service"]>;
   readonly remoteAuthorization?: Option.Option<
@@ -176,8 +181,21 @@ const executeEnvironmentRequest = Effect.fnUntraced(function* <
   Effect.Services<ReturnType<typeof makeEnvironmentHttpApiGroupClient<Group>>> | R
 > {
   let httpBaseUrl = input.prepared.httpBaseUrl;
-  const requestUrlFor = (baseUrl: string) =>
-    input.url(makeEnvironmentHttpApiUrlBuilder(baseUrl)[input.group]);
+  const requestUrlFor = (baseUrl: string) => {
+    const built = input.url(makeEnvironmentHttpApiUrlBuilder(baseUrl)[input.group]);
+    const ticket = new URL(baseUrl).searchParams.get("gatewayTicket");
+    // The URL builder strips query from the base, so reattach the hop ticket for DPoP and fetch.
+    return ticket === null || ticket.length === 0
+      ? built
+      : withGatewayTicket(built, Option.some(ticket));
+  };
+  // Errors may surface in logs/UI; keep hop tickets out of those strings.
+  const errorRequestUrl = (url: string) => {
+    const next = new URL(url);
+    if (!next.searchParams.has("gatewayTicket")) return url;
+    next.searchParams.delete("gatewayTicket");
+    return next.toString();
+  };
   return yield* Effect.gen(function* () {
     let rejectedAccessToken: string | undefined;
     for (;;) {
@@ -211,8 +229,20 @@ const executeEnvironmentRequest = Effect.fnUntraced(function* <
         authorization = current.httpAuthorization;
       }
 
-      const requestUrl = requestUrlFor(httpBaseUrl);
-      const client = yield* makeEnvironmentHttpApiGroupClient(httpBaseUrl, input.group);
+      const requestBase =
+        input.prepared.gatewayTicket === undefined
+          ? httpBaseUrl
+          : yield* ticketedHttpBaseUrl({ ...input.prepared, httpBaseUrl }).pipe(
+              Effect.mapError(
+                (cause) =>
+                  new RemoteEnvironmentAuthFetchError({
+                    message: "Could not authorize the LAN gateway request.",
+                    cause,
+                  }),
+              ),
+            );
+      const requestUrl = requestUrlFor(requestBase);
+      const client = yield* makeEnvironmentHttpApiGroupClient(requestBase, input.group);
       const headers = yield* buildEnvironmentAuthHeaders(
         authorization,
         input.method,
@@ -220,7 +250,7 @@ const executeEnvironmentRequest = Effect.fnUntraced(function* <
         input.signer,
       );
       const result = yield* executeEnvironmentHttpRequest(
-        requestUrl,
+        errorRequestUrl(requestUrl),
         input.timeoutMs,
         withEnvironmentRequestInit(
           authorization,
@@ -263,7 +293,7 @@ const executeEnvironmentRequest = Effect.fnUntraced(function* <
       orElse: () =>
         Effect.fail(
           new RemoteEnvironmentAuthTimeoutError({
-            requestUrl: requestUrlFor(httpBaseUrl),
+            requestUrl: errorRequestUrl(requestUrlFor(httpBaseUrl)),
             timeoutMs: input.timeoutMs,
           }),
         ),

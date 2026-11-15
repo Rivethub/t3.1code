@@ -17,8 +17,14 @@ import {
   insertRoute,
   entryWithRoutes,
   isNearbyAddress,
+  claimedGatewayPeerIds,
+  desiredGatewayPeers,
+  gatewayPeerUpstreamUrl,
+  mergeGatewayRoutes,
   mergeLearnedRoutes,
   pendingRouteOrder,
+  planGatewayPeerReconcile,
+  retainedGatewayPeerIds,
   removedWithRelay,
   routeKeepsItsHost,
   routesAfterRemoving,
@@ -466,5 +472,444 @@ describe("learned routes", () => {
     });
     expect(moved).not.toBeNull();
     expect(profileOf(moved![0]!)).toMatchObject({ httpBaseUrl: "https://desk.local:3773/" });
+  });
+});
+
+describe("gateway routes", () => {
+  const GATEWAY_ID = EnvironmentId.make("env_gateway");
+  const PEER_ID = EnvironmentId.make("environment-1");
+  const gatewayOrigin = "https://connect-host.example/";
+  const paired: ConnectionCatalogEntry = {
+    target: LAN.target,
+    profile: LAN.profile,
+    alternateRoutes: [RELAY],
+    enabled: true,
+  };
+  const ids = (routes: ReadonlyArray<ConnectionRoute> | null) =>
+    routes?.map((route) => connectionRouteId(route.target)) ?? null;
+  const profileOf = (route: ConnectionRoute) => Option.getOrThrow(route.profile);
+
+  it("adds a gateway route ahead of T3 Connect, borrowing the paired credential", () => {
+    const routes = mergeGatewayRoutes({
+      entry: paired,
+      gatewayEnvironmentId: GATEWAY_ID,
+      gatewayHttpBaseUrl: gatewayOrigin,
+      advertised: [{ environmentId: PEER_ID, label: "Desk" }],
+    });
+    expect(ids(routes)).toEqual(["lan", `gateway:${GATEWAY_ID}:${PEER_ID}@lan`, "relay"]);
+    expect(connectionRouteKind(routes![1]!)).toBe("gateway");
+    expect(connectionRouteLabel(routes![1]!)).toBe("LAN gateway");
+    expect(profileOf(routes![1]!)).toMatchObject({
+      learned: true,
+      gatewayEnvironmentId: GATEWAY_ID,
+      httpBaseUrl: `https://connect-host.example/__t3_gateway/${PEER_ID}/`,
+      wsBaseUrl: `wss://connect-host.example/__t3_gateway/${PEER_ID}/`,
+    });
+    expect(credentialConnectionId(connectionRouteId(routes![1]!.target))).toBe("lan");
+  });
+
+  it("drops gateway routes when the host stops advertising the peer", () => {
+    const first = mergeGatewayRoutes({
+      entry: paired,
+      gatewayEnvironmentId: GATEWAY_ID,
+      gatewayHttpBaseUrl: gatewayOrigin,
+      advertised: [{ environmentId: PEER_ID, label: "Desk" }],
+    })!;
+    const entry: ConnectionCatalogEntry = {
+      ...paired,
+      target: first[0]!.target,
+      profile: first[0]!.profile,
+      alternateRoutes: first.slice(1),
+    };
+    expect(
+      ids(
+        mergeGatewayRoutes({
+          entry,
+          gatewayEnvironmentId: GATEWAY_ID,
+          gatewayHttpBaseUrl: gatewayOrigin,
+          advertised: [],
+        }),
+      ),
+    ).toEqual(["lan", "relay"]);
+  });
+
+  it("retires a gateway route whose credential changed", () => {
+    const withRelayOnlyGateway: ConnectionCatalogEntry = {
+      ...paired,
+      alternateRoutes: [
+        RELAY,
+        {
+          target: new BearerConnectionTarget({
+            environmentId: PEER_ID,
+            label: "Desk",
+            connectionId: `gateway:${GATEWAY_ID}:${PEER_ID}`,
+          }),
+          profile: Option.some(
+            new BearerConnectionProfile({
+              connectionId: `gateway:${GATEWAY_ID}:${PEER_ID}`,
+              environmentId: PEER_ID,
+              label: "Desk",
+              httpBaseUrl: `https://connect-host.example/__t3_gateway/${PEER_ID}/`,
+              wsBaseUrl: `wss://connect-host.example/__t3_gateway/${PEER_ID}/`,
+              learned: true,
+              gatewayEnvironmentId: GATEWAY_ID,
+            }),
+          ),
+        },
+      ],
+    };
+    expect(
+      ids(
+        mergeGatewayRoutes({
+          entry: withRelayOnlyGateway,
+          gatewayEnvironmentId: GATEWAY_ID,
+          gatewayHttpBaseUrl: gatewayOrigin,
+          advertised: [{ environmentId: PEER_ID, label: "Desk" }],
+        }),
+      ),
+    ).toEqual(["lan", `gateway:${GATEWAY_ID}:${PEER_ID}@lan`, "relay"]);
+  });
+
+  it("does not create a gateway route without a paired bearer credential", () => {
+    expect(
+      mergeGatewayRoutes({
+        entry: { target: RELAY.target, profile: RELAY.profile, enabled: true },
+        gatewayEnvironmentId: GATEWAY_ID,
+        gatewayHttpBaseUrl: gatewayOrigin,
+        advertised: [{ environmentId: PEER_ID, label: "Desk" }],
+      }),
+    ).toBeNull();
+  });
+
+  it("does not add a learned route when the peer was paired through this gateway", () => {
+    const pairedThroughGateway: ConnectionCatalogEntry = {
+      target: new BearerConnectionTarget({
+        environmentId: PEER_ID,
+        label: "Desk",
+        connectionId: "bearer:peer:https://connect-host.example",
+      }),
+      profile: Option.some(
+        new BearerConnectionProfile({
+          connectionId: "bearer:peer:https://connect-host.example",
+          environmentId: PEER_ID,
+          label: "Desk",
+          httpBaseUrl: `https://connect-host.example/__t3_gateway/${PEER_ID}/`,
+          wsBaseUrl: `wss://connect-host.example/__t3_gateway/${PEER_ID}/`,
+          gatewayEnvironmentId: GATEWAY_ID,
+        }),
+      ),
+      enabled: true,
+    };
+    expect(
+      mergeGatewayRoutes({
+        entry: pairedThroughGateway,
+        gatewayEnvironmentId: GATEWAY_ID,
+        gatewayHttpBaseUrl: gatewayOrigin,
+        advertised: [{ environmentId: PEER_ID, label: "Desk" }],
+      }),
+    ).toBeNull();
+  });
+
+  it("ignores advertisements for other peers", () => {
+    expect(
+      mergeGatewayRoutes({
+        entry: paired,
+        gatewayEnvironmentId: GATEWAY_ID,
+        gatewayHttpBaseUrl: gatewayOrigin,
+        advertised: [{ environmentId: EnvironmentId.make("env_other"), label: "Other" }],
+      }),
+    ).toBeNull();
+  });
+
+  it("prefers direct routes over gateway, and gateway over relay", () => {
+    expect(insertRoute([RELAY], LAN)).toEqual([LAN, RELAY]);
+    const gateway = mergeGatewayRoutes({
+      entry: paired,
+      gatewayEnvironmentId: GATEWAY_ID,
+      gatewayHttpBaseUrl: gatewayOrigin,
+      advertised: [{ environmentId: PEER_ID, label: "Desk" }],
+    })!;
+    const gatewayRoute = gateway.find((route) => connectionRouteKind(route) === "gateway")!;
+    expect(insertRoute([RELAY], gatewayRoute)).toEqual([gatewayRoute, RELAY]);
+  });
+
+  it("keeps gateway routes when learning direct endpoints", () => {
+    const withGateway = mergeGatewayRoutes({
+      entry: paired,
+      gatewayEnvironmentId: GATEWAY_ID,
+      gatewayHttpBaseUrl: gatewayOrigin,
+      advertised: [{ environmentId: PEER_ID, label: "Desk" }],
+    })!;
+    const entry: ConnectionCatalogEntry = {
+      ...paired,
+      target: withGateway[0]!.target,
+      profile: withGateway[0]!.profile,
+      alternateRoutes: withGateway.slice(1),
+    };
+    const next = mergeLearnedRoutes({
+      entry,
+      activeRoute: RELAY,
+      reported: [{ kind: "lan", httpBaseUrl: "http://192.168.1.50:13773/" }],
+      allowInsecure: true,
+    });
+    expect(ids(next)).toContain(`gateway:${GATEWAY_ID}:${PEER_ID}@lan`);
+  });
+
+  it("rewrites gateway peer URLs when the host origin changes", () => {
+    const first = mergeGatewayRoutes({
+      entry: paired,
+      gatewayEnvironmentId: GATEWAY_ID,
+      gatewayHttpBaseUrl: "https://lan-host.example/",
+      advertised: [{ environmentId: PEER_ID, label: "Desk" }],
+    })!;
+    const entry: ConnectionCatalogEntry = {
+      ...paired,
+      target: first[0]!.target,
+      profile: first[0]!.profile,
+      alternateRoutes: first.slice(1),
+    };
+    const next = mergeGatewayRoutes({
+      entry,
+      gatewayEnvironmentId: GATEWAY_ID,
+      gatewayHttpBaseUrl: gatewayOrigin,
+      advertised: [{ environmentId: PEER_ID, label: "Desk" }],
+    });
+    expect(
+      profileOf(next!.find((route) => connectionRouteKind(route) === "gateway")!),
+    ).toMatchObject({
+      httpBaseUrl: `https://connect-host.example/__t3_gateway/${PEER_ID}/`,
+    });
+  });
+
+  it("drops http gateway routes on an https page", () => {
+    const previous = globalThis.location;
+    Object.defineProperty(globalThis, "location", {
+      configurable: true,
+      value: { protocol: "https:" },
+    });
+    try {
+      const lanGateway = "http://192.168.1.10:13773/";
+      expect(
+        mergeGatewayRoutes({
+          entry: paired,
+          gatewayEnvironmentId: GATEWAY_ID,
+          gatewayHttpBaseUrl: lanGateway,
+          advertised: [{ environmentId: PEER_ID, label: "Desk" }],
+        }),
+      ).toBeNull();
+
+      const withHttpsGateway = mergeGatewayRoutes({
+        entry: paired,
+        gatewayEnvironmentId: GATEWAY_ID,
+        gatewayHttpBaseUrl: gatewayOrigin,
+        advertised: [{ environmentId: PEER_ID, label: "Desk" }],
+      })!;
+      const entry: ConnectionCatalogEntry = {
+        ...paired,
+        target: withHttpsGateway[0]!.target,
+        profile: withHttpsGateway[0]!.profile,
+        alternateRoutes: withHttpsGateway.slice(1),
+      };
+      expect(
+        ids(
+          mergeGatewayRoutes({
+            entry,
+            gatewayEnvironmentId: GATEWAY_ID,
+            gatewayHttpBaseUrl: lanGateway,
+            advertised: [{ environmentId: PEER_ID, label: "Desk" }],
+          }),
+        ),
+      ).toEqual(["lan", "relay"]);
+    } finally {
+      Object.defineProperty(globalThis, "location", {
+        configurable: true,
+        value: previous,
+      });
+    }
+  });
+});
+
+describe("gateway peer upstream selection", () => {
+  const GATEWAY_ID = EnvironmentId.make("env_gateway");
+
+  it("prefers LAN over Tailscale and loopback", () => {
+    const entry: ConnectionCatalogEntry = {
+      target: LAN.target,
+      profile: LAN.profile,
+      alternateRoutes: [TAILNET, direct("loop", "http://127.0.0.1:3773/")],
+      enabled: true,
+    };
+    expect(gatewayPeerUpstreamUrl(entry)).toBe("http://192.168.1.10:3773");
+  });
+
+  it("skips gateway, relay, and public routes", () => {
+    expect(
+      gatewayPeerUpstreamUrl({
+        target: RELAY.target,
+        profile: RELAY.profile,
+        enabled: true,
+      }),
+    ).toBeNull();
+    expect(
+      gatewayPeerUpstreamUrl({
+        target: PUBLIC.target,
+        profile: PUBLIC.profile,
+        enabled: true,
+      }),
+    ).toBeNull();
+  });
+
+  it("builds the desired peer set from enabled catalog entries", () => {
+    const peer: ConnectionCatalogEntry = {
+      target: LAN.target,
+      profile: LAN.profile,
+      enabled: true,
+    };
+    const disabled: ConnectionCatalogEntry = {
+      target: new BearerConnectionTarget({
+        environmentId: EnvironmentId.make("env_off"),
+        label: "Off",
+        connectionId: "off",
+      }),
+      profile: Option.some(
+        new BearerConnectionProfile({
+          connectionId: "off",
+          environmentId: EnvironmentId.make("env_off"),
+          label: "Off",
+          httpBaseUrl: "http://192.168.1.99:3773/",
+          wsBaseUrl: "ws://192.168.1.99:3773/",
+        }),
+      ),
+      enabled: false,
+    };
+    expect(desiredGatewayPeers([peer, disabled], GATEWAY_ID)).toEqual([
+      { environmentId: ENVIRONMENT_ID, url: "http://192.168.1.10:3773" },
+    ]);
+    expect(desiredGatewayPeers([peer], ENVIRONMENT_ID)).toEqual([]);
+  });
+
+  it("plans adds for missing or moved peers and removes stale ones", () => {
+    const keep = EnvironmentId.make("env_keep");
+    const move = EnvironmentId.make("env_move");
+    const drop = EnvironmentId.make("env_drop");
+    expect(
+      planGatewayPeerReconcile({
+        desired: [
+          { environmentId: keep, url: "http://192.168.1.10:3773" },
+          { environmentId: move, url: "http://192.168.1.20:3773" },
+        ],
+        listed: [
+          { environmentId: keep, httpBaseUrl: "http://192.168.1.10:3773/" },
+          { environmentId: move, httpBaseUrl: "http://192.168.1.99:3773/" },
+          { environmentId: drop, httpBaseUrl: "http://192.168.1.30:3773/" },
+        ],
+        previousDesired: new Set([keep, move, drop]),
+      }),
+    ).toEqual({
+      add: [{ environmentId: move, url: "http://192.168.1.20:3773" }],
+      remove: [drop],
+    });
+  });
+
+  it("does not remove peers another client may still need", () => {
+    const keep = EnvironmentId.make("env_keep");
+    const otherClientPeer = EnvironmentId.make("env_other");
+    expect(
+      planGatewayPeerReconcile({
+        desired: [{ environmentId: keep, url: "http://192.168.1.10:3773" }],
+        listed: [
+          { environmentId: keep, httpBaseUrl: "http://192.168.1.10:3773/" },
+          { environmentId: otherClientPeer, httpBaseUrl: "http://192.168.1.50:3773/" },
+        ],
+        previousDesired: new Set([keep]),
+      }),
+    ).toEqual({ add: [], remove: [] });
+    expect(
+      planGatewayPeerReconcile({
+        desired: [],
+        listed: [{ environmentId: otherClientPeer, httpBaseUrl: "http://192.168.1.50:3773/" }],
+        previousDesired: new Set(),
+      }),
+    ).toEqual({ add: [], remove: [] });
+  });
+
+  it("claims ownership only for successful or already-listed registrations", () => {
+    const owned = EnvironmentId.make("env_owned");
+    const listed = EnvironmentId.make("env_listed");
+    const failed = EnvironmentId.make("env_failed");
+    const succeeded = EnvironmentId.make("env_ok");
+    expect(
+      claimedGatewayPeerIds({
+        desired: [
+          { environmentId: owned },
+          { environmentId: listed },
+          { environmentId: failed },
+          { environmentId: succeeded },
+        ],
+        previousDesired: new Set([owned]),
+        addAttempts: [failed, succeeded],
+        addSucceeded: new Set([succeeded]),
+      }),
+    ).toEqual(new Set([owned, listed, succeeded]));
+
+    // A later catalog drop of a never-claimed peer must not plan a remove.
+    expect(
+      planGatewayPeerReconcile({
+        desired: [],
+        listed: [{ environmentId: failed, httpBaseUrl: "http://192.168.1.90:3773/" }],
+        previousDesired: claimedGatewayPeerIds({
+          desired: [{ environmentId: failed }],
+          previousDesired: new Set(),
+          addAttempts: [failed],
+          addSucceeded: new Set(),
+        }),
+      }),
+    ).toEqual({ add: [], remove: [] });
+  });
+
+  it("does not remove peers the catalog still reaches through this gateway", () => {
+    const keep = EnvironmentId.make("env_keep");
+    const pairedThroughGateway = EnvironmentId.make("env_gateway_only");
+    const drop = EnvironmentId.make("env_drop");
+    expect(
+      planGatewayPeerReconcile({
+        desired: [{ environmentId: keep, url: "http://192.168.1.10:3773" }],
+        listed: [
+          { environmentId: keep, httpBaseUrl: "http://192.168.1.10:3773/" },
+          { environmentId: pairedThroughGateway, httpBaseUrl: "http://192.168.1.40:3773/" },
+          { environmentId: drop, httpBaseUrl: "http://192.168.1.30:3773/" },
+        ],
+        retain: new Set([pairedThroughGateway]),
+      }),
+    ).toEqual({
+      add: [],
+      remove: [drop],
+    });
+
+    const gatewayOnly: ConnectionCatalogEntry = {
+      target: new BearerConnectionTarget({
+        environmentId: pairedThroughGateway,
+        label: "Peer",
+        connectionId: "bearer:peer:https://connect-host.example",
+      }),
+      profile: Option.some(
+        new BearerConnectionProfile({
+          connectionId: "bearer:peer:https://connect-host.example",
+          environmentId: pairedThroughGateway,
+          label: "Peer",
+          httpBaseUrl: `https://connect-host.example/__t3_gateway/${pairedThroughGateway}/`,
+          wsBaseUrl: `wss://connect-host.example/__t3_gateway/${pairedThroughGateway}/`,
+          gatewayEnvironmentId: GATEWAY_ID,
+        }),
+      ),
+      enabled: true,
+    };
+    expect(retainedGatewayPeerIds([gatewayOnly], GATEWAY_ID)).toEqual(
+      new Set([pairedThroughGateway]),
+    );
+    expect(desiredGatewayPeers([gatewayOnly], GATEWAY_ID)).toEqual([]);
+    expect(retainedGatewayPeerIds([{ ...gatewayOnly, enabled: false }], GATEWAY_ID)).toEqual(
+      new Set(),
+    );
   });
 });

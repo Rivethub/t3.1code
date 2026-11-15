@@ -48,8 +48,10 @@ import {
   appendOrchestrationProtocol,
   orchestrationProtocolCompatibilityError,
 } from "./compatibility.ts";
+import * as GatewayHop from "./gatewayHop.ts";
 import { credentialConnectionId } from "./routes.ts";
 import { fetchRemoteEnvironmentDescriptor } from "../environment/descriptor.ts";
+import { withGatewayTicket } from "../environment/endpoint.ts";
 
 export class ConnectionResolver extends Context.Service<
   ConnectionResolver,
@@ -125,6 +127,7 @@ const makePrimaryBroker = Effect.fn("clientRuntime.connection.broker.makePrimary
 const makeBearerBroker = Effect.fn("clientRuntime.connection.broker.makeBearer")(function* () {
   const credentials = yield* ConnectionCredentialStore.ConnectionCredentialStore;
   const remote = yield* RemoteEnvironmentAuthorization.RemoteEnvironmentAuthorization;
+  const gatewayHop = yield* GatewayHop.GatewayHopAuthorization;
 
   return Effect.fn("clientRuntime.connection.broker.bearer")(function* (
     entry: ConnectionCatalogEntry & { readonly target: BearerConnectionTarget },
@@ -145,12 +148,24 @@ const makeBearerBroker = Effect.fn("clientRuntime.connection.broker.makeBearer")
         actual: profile.environmentId,
       });
     }
+    const gatewayTicket =
+      profile.gatewayEnvironmentId === undefined
+        ? undefined
+        : gatewayHop.issueTicket(profile.gatewayEnvironmentId);
+    // This ticket only covers the attempt. Later requests mint their own through `gatewayTicket`.
+    const ticket = gatewayTicket === undefined ? Option.none<string>() : yield* gatewayTicket;
+    const hop = {
+      httpBaseUrl: withGatewayTicket(profile.httpBaseUrl, ticket),
+      wsBaseUrl: withGatewayTicket(profile.wsBaseUrl, ticket),
+    };
+    const gateway =
+      gatewayTicket === undefined ? {} : { httpBaseUrl: profile.httpBaseUrl, gatewayTicket };
     if (profile.authorization === "t3-connect") {
       const authorized = yield* remote.authorizeDpop({
         expectedEnvironmentId: target.environmentId,
-        directEndpoint: { httpBaseUrl: profile.httpBaseUrl, wsBaseUrl: profile.wsBaseUrl },
+        directEndpoint: hop,
       });
-      return { ...authorized, target } satisfies PreparedConnection;
+      return { ...authorized, ...gateway, target } satisfies PreparedConnection;
     }
     const credential = yield* credentials.get(credentialConnectionId(target.connectionId)).pipe(
       Effect.flatMap(
@@ -165,13 +180,14 @@ const makeBearerBroker = Effect.fn("clientRuntime.connection.broker.makeBearer")
     }
     const authorized = yield* remote.authorizeBearer({
       expectedEnvironmentId: target.environmentId,
-      httpBaseUrl: profile.httpBaseUrl,
-      wsBaseUrl: profile.wsBaseUrl,
+      httpBaseUrl: hop.httpBaseUrl,
+      wsBaseUrl: hop.wsBaseUrl,
       bearerToken: credential.token,
       connectionMethod: "direct",
     });
     return {
       ...authorized,
+      ...gateway,
       target,
     } satisfies PreparedConnection;
   });
