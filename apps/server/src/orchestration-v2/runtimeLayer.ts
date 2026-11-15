@@ -55,6 +55,8 @@ import * as RuntimePolicy from "./RuntimePolicy.ts";
 import * as RuntimeRequestService from "./RuntimeRequestService.ts";
 import * as ThreadManagementService from "./ThreadManagementService.ts";
 import * as ThreadLaunchService from "./ThreadLaunchService.ts";
+import * as ContributorBundleService from "./ContributorBundleService.ts";
+import * as ContributorBundleLoader from "../project/ContributorBundleLoader.ts";
 import * as ThreadForkService from "./ThreadForkService.ts";
 import * as TurnItemPositionStore from "./TurnItemPositionStore.ts";
 import * as ScheduledTaskService from "../scheduledTasks/ScheduledTaskService.ts";
@@ -292,6 +294,16 @@ const layerThreadLaunchProvided = ThreadLaunchService.layer.pipe(
     ).pipe(Layer.provideMerge(layerProjectService)),
   ),
 );
+const layerContributorBundleLoaderProvided = ContributorBundleLoader.layer;
+const layerContributorBundleProvided = ContributorBundleService.layer.pipe(
+  Layer.provide(
+    Layer.mergeAll(
+      layerContributorBundleLoaderProvided,
+      layerThreadManagementProvided,
+      IdAllocator.layer,
+    ).pipe(Layer.provideMerge(layerProjectService)),
+  ),
+);
 const layerSecretRequestsProvided = SecretRequests.layer.pipe(
   Layer.provide(layerThreadManagementProvided),
 );
@@ -393,6 +405,7 @@ export const layerProduction = Layer.mergeAll(
   layer,
   layerManagedProjectFoldersProvided,
   layerThreadLaunchProvided,
+  layerContributorBundleProvided,
   layerScheduledTaskProvided,
   layerScratchThreadPromotionProvided,
   layerSecretRequestsProvided,
