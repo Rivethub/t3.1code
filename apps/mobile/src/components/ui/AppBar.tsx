@@ -114,6 +114,20 @@ export function AppBar(props: AppBarProps) {
     !compactSearch &&
     NATIVE_MAIL_SEARCH_TOOLBAR_SUPPORTED &&
     isDuoDevice(deviceType);
+  // iOS 27's X only blurs; Search sets this so blur keeps the filter instead of clearing.
+  const retainQueryOnBlur = useRef(false);
+  const clearSearch = () => {
+    reportSearchText("");
+    search?.onClose?.();
+  };
+  const handleSearchBlur = () => {
+    if (!search || search.mode === "inline" || duoBottomSearch) return;
+    if (retainQueryOnBlur.current) {
+      retainQueryOnBlur.current = false;
+      return;
+    }
+    clearSearch();
+  };
   if (props.embedded || props.sheet) return null;
   return (
     <>
@@ -168,7 +182,11 @@ export function AppBar(props: AppBarProps) {
                       placeholder: search.placeholder,
                       ref: searchBarRef,
                       onChangeText: (event) => reportSearchText(event.nativeEvent.text),
-                      onCancelButtonPress: () => reportSearchText(""),
+                      onBlur: handleSearchBlur,
+                      onSearchButtonPress: () => {
+                        retainQueryOnBlur.current = true;
+                      },
+                      onCancelButtonPress: clearSearch,
                     },
               }
             : undefined),
