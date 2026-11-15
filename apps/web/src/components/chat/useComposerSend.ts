@@ -1,3 +1,4 @@
+import { usePullRequestCheckoutState } from "../pullRequest/pullRequestCheckoutState";
 import { isClearComposerCommand, parseSideChatCommand } from "@t3tools/shared/composerTrigger";
 import { armFreshSession, disarmFreshSession, readFreshSessionArm } from "./freshSessionArms";
 import {
@@ -434,6 +435,7 @@ export function useComposerSend(input: ComposerSendInput) {
       );
     };
     if (
+      (draftId !== null && usePullRequestCheckoutState.getState().draftIds.has(draftId)) ||
       !readEnvironmentScope(environmentId, AuthOrchestrationOperateScope) ||
       !activeThread ||
       isRevertingCheckpoint ||

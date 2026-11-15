@@ -625,7 +625,7 @@ interface ComposerDraftStoreState {
       loadBalancedEnvironmentId?: EnvironmentId | null;
       checkoutPullRequest?: DraftCheckoutPullRequest | null;
     },
-  ) => void;
+  ) => boolean;
   clearProjectDraftThreadId: (projectRef: ScopedProjectRef) => void;
   clearProjectDraftThreadById: (
     projectRef: ScopedProjectRef,
@@ -2974,8 +2974,9 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
         setDraftThreadContext: (threadRef, options) => {
           const threadKey = resolveComposerDraftKey(get(), threadRef) ?? "";
           if (threadKey.length === 0) {
-            return;
+            return false;
           }
+          let applied = false;
           set((state) => {
             const existing = state.draftThreadsByThreadKey[threadKey];
             if (!existing) {
@@ -3064,6 +3065,8 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
                 existing.checkoutPullRequest,
               ) &&
               scopedThreadRefsEqual(nextDraftThread.promotedTo, existing.promotedTo);
+            // Missing drafts stay false; an already-matching draft still counts as applied.
+            applied = true;
             if (isUnchanged) {
               return state;
             }
@@ -3074,6 +3077,7 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
               },
             };
           });
+          return applied;
         },
         clearProjectDraftThreadId: (projectRef) => {
           set((state) => {
