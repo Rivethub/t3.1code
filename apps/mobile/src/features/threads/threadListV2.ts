@@ -71,6 +71,7 @@ export type ThreadListV2Status =
   | "input"
   | "request"
   | "working"
+  | "pending"
   | "waiting"
   | "failed"
   | "limited"
@@ -270,6 +271,7 @@ export function resolveThreadListV2Status(
     | "runtime"
     | "blockedOnThreadWait"
   >,
+  options?: { readonly hasQueuedMessages?: boolean },
 ): ThreadListV2Status {
   if (thread.hasPendingApprovals || thread.pendingSubagentRequest === "approval") {
     return "approval";
@@ -289,6 +291,9 @@ export function resolveThreadListV2Status(
     ["preparing", "queued", "starting", "running", "waiting"].includes(thread.runtime.status)
   ) {
     return "working";
+  }
+  if (options?.hasQueuedMessages === true) {
+    return "pending";
   }
   if (thread.runtime?.status === "idle") {
     return "waiting";
@@ -332,8 +337,9 @@ export function threadListV2RowAccessibilityLabel(input: {
 export function resolveThreadListV2RowStatus(
   thread: Parameters<typeof resolveThreadListV2Status>[0] &
     Pick<EnvironmentThreadShell, "latestRun" | "lastVisitedAt">,
+  options?: { readonly hasQueuedMessages?: boolean },
 ): ThreadListV2Status {
-  const status = resolveThreadListV2Status(thread);
+  const status = resolveThreadListV2Status(thread, options);
   // A runtime failure without a failed run has nothing to date it, so it stays.
   if (status !== "failed" || thread.latestRun?.status !== "failed") return status;
   return hasUnseenRunFailure(thread) ? status : "ready";
@@ -544,12 +550,13 @@ export function threadListV2ListItemsAreEqual(
 function resolveThreadListV2ItemTimeLabel(
   item: ThreadListV2Item,
   showSnoozeWakeLabel: boolean,
+  options?: { readonly hasQueuedMessages?: boolean },
 ): string {
   const { thread, variant, snoozed } = item;
   if (showSnoozeWakeLabel) return "";
   if (
     variant === "card" &&
-    (resolveThreadListV2RowStatus(thread) !== "ready" ||
+    (resolveThreadListV2RowStatus(thread, options) !== "ready" ||
       item.wokeAt !== null ||
       threadHasUnseenCompletion(thread))
   )
@@ -597,16 +604,19 @@ export function buildThreadListV2ListItems(input: {
       item.variant === "card"
         ? input.moveAvailability?.get(`${item.thread.environmentId}:${item.thread.id}`)
         : undefined;
+    const hasQueuedMessages =
+      queuedThreadKeys?.has(`${item.thread.environmentId}:${item.thread.id}`) === true;
     return {
       type: "v2-thread",
       key: `v2-thread:${item.thread.environmentId}:${item.thread.id}`,
       item,
       snoozeWakeLabelText,
-      timeLabel: resolveThreadListV2ItemTimeLabel(item, snoozeWakeLabelText !== undefined),
+      timeLabel: resolveThreadListV2ItemTimeLabel(item, snoozeWakeLabelText !== undefined, {
+        hasQueuedMessages,
+      }),
       snoozePresetMinute,
       showTrailingDivider: false,
-      hasQueuedMessages:
-        queuedThreadKeys?.has(`${item.thread.environmentId}:${item.thread.id}`) === true,
+      hasQueuedMessages,
       canMoveUp: move?.canMoveUp === true,
       canMoveDown: move?.canMoveDown === true,
     };
@@ -791,11 +801,37 @@ export function buildThreadListV2Items(input: {
     }
     const hasQueuedMessages =
       queuedThreadKeys?.has(`${thread.environmentId}:${thread.id}`) === true;
+    // Keep attention visible in Active when Working is collapsed. Guest requests are
+    // also blocked on both Working paths while a send is queued, since isThreadWorking
+    // can still be true for a running guest-request thread.
+    const hasGuestRequest = (thread.pendingGuestMessageCount ?? 0) > 0;
+    const hasAttentionRequest =
+      thread.hasPendingApprovals ||
+      thread.hasPendingUserInput ||
+      thread.pendingSubagentRequest != null ||
+      hasGuestRequest;
+    const run = thread.latestRun;
+    const runSettled =
+      run !== null &&
+      run.status !== "preparing" &&
+      run.status !== "queued" &&
+      run.status !== "starting" &&
+      run.status !== "running" &&
+      run.status !== "waiting" &&
+      thread.runtime?.activeRunId !== run.runId;
+    const hasActionablePlanReview =
+      thread.interactionMode === "plan" && thread.hasActionableProposedPlan && runSettled;
+    const countsQueuedAsWorking =
+      hasQueuedMessages && !hasAttentionRequest && !hasActionablePlanReview;
     if (supportsSettlement && thread.settledOverride === "settled" && !hasQueuedMessages) {
       settled.push(thread);
     } else if (thread.pinnedAt != null) {
       pinned.push(thread);
-    } else if (workingShelfEnabled && (input.isWorking ?? isThreadWorking)(thread)) {
+    } else if (
+      workingShelfEnabled &&
+      !(hasQueuedMessages && hasGuestRequest) &&
+      (countsQueuedAsWorking || (input.isWorking ?? isThreadWorking)(thread))
+    ) {
       working.push(thread);
     } else {
       active.push(thread);
