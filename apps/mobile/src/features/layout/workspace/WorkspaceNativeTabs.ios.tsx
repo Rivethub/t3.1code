@@ -4,29 +4,23 @@ import {
   useEnabledNavigationTabs,
 } from "./navigation-tabs";
 import { useLayoutEffect, useRef, useState, type ReactNode } from "react";
-import { View, useWindowDimensions, type NativeSyntheticEvent } from "react-native";
+import { View, type NativeSyntheticEvent } from "react-native";
 import { Tabs, type TabSelectedEvent, type TabSelectionRejectedEvent } from "react-native-screens";
 
 import { WorkspaceTabsContext, useWorkspaceTabs } from "./WorkspaceTabsContext";
 import {
   NATIVE_WORKSPACE_TAB_SLOTS,
   workspaceTabForNativeSlot,
-  workspaceUsesColumns,
   type WorkspaceTab,
 } from "./workspace-tabs-state";
 import {
   NativeWorkspaceTabActivityContext,
   WorkspaceSlotOptionsContext,
 } from "../../../native/v5-workspace-context";
-import {
-  useCompactWorkspaceTabs,
-  useFloatingWorkspaceTabs,
-  useSystemWorkspaceTabBar,
-} from "./useSystemWorkspaceTabBar";
+import { useFloatingWorkspaceTabs, useSystemWorkspaceTabBar } from "./useSystemWorkspaceTabBar";
 import { useControlTheme } from "../../../components/ui/useControlTheme";
-import { useDeviceType } from "../../../native/native-layout-metrics";
 import { WorkspaceSidebarTabs } from "./WorkspaceSidebarTabs";
-import { useAdaptiveWorkspaceLayout, useWorkspacePaneState } from "../AdaptiveWorkspaceLayout";
+import { useAdaptiveWorkspaceLayout } from "../AdaptiveWorkspaceLayout";
 import { useSelectWorkspaceTab } from "./useSelectWorkspaceTab";
 
 const PULL_REQUEST_ICON = require("../../../../assets/icons/pull-request.png");
@@ -73,8 +67,6 @@ function RetainedWorkspaceTab(props: {
 export function WorkspaceNativeTabs(props: {
   readonly children: ReactNode;
   readonly hidden: boolean;
-  /** The sidebar column draws the tabs itself, so they leave with it. */
-  readonly tabsInSidebarColumn?: boolean;
 }) {
   const workspace = useWorkspaceTabs()!;
   const order = useEnabledNavigationTabs();
@@ -83,18 +75,6 @@ export function WorkspaceNativeTabs(props: {
   const selectTab = useSelectWorkspaceTab();
   const [provenance, setProvenance] = useState(0);
   const systemTabBar = useSystemWorkspaceTabBar();
-  const deviceType = useDeviceType();
-  const compactTabs = useCompactWorkspaceTabs();
-  const { layout } = useAdaptiveWorkspaceLayout();
-  const { panes } = useWorkspacePaneState();
-  // The tabs belong to the sidebar; over a page with the sidebar hidden they'd cover the composer.
-  const hiddenWithSidebar =
-    deviceType === "pad" &&
-    layout.usesSplitView &&
-    workspaceUsesColumns(workspace.state.selectedTab, workspace.settingsOpen) &&
-    !panes.primarySidebarVisible;
-  const floatingTabs = useFloatingWorkspaceTabs();
-  const { width } = useWindowDimensions();
   const { colors } = useControlTheme();
   const selectedTab = workspace.state.selectedTab;
   const selectedSlot = workspace.settingsOpen ? -1 : primaryTabs.indexOf(selectedTab);
@@ -158,30 +138,6 @@ export function WorkspaceNativeTabs(props: {
           );
         })}
       </Tabs.Host>
-      {(deviceType === "pad" ||
-        compactTabs ||
-        (layout.variant === "medium" &&
-          !workspaceUsesColumns(selectedTab, workspace.settingsOpen))) &&
-      !props.hidden &&
-      !props.tabsInSidebarColumn &&
-      !hiddenWithSidebar ? (
-        <View
-          pointerEvents="box-none"
-          style={{
-            position: "absolute",
-            left: 0,
-            bottom: 0,
-            // UIKit can shrink the sidebar to 280pt independently of its preferred width.
-            width:
-              deviceType === "pad" && (floatingTabs || layout.usesSplitView)
-                ? Math.min(280, layout.listPaneWidth ?? width, width)
-                : (layout.listPaneWidth ?? width),
-            height: 128,
-          }}
-        >
-          <WorkspaceSidebarTabsFooter />
-        </View>
-      ) : null}
     </View>
   );
 }
