@@ -1753,6 +1753,7 @@ describe("Working section beta", () => {
         workingShelfExpanded: true,
         isWorking: tracker.isWorking,
         inboxReturnAt: tracker.returnedAt,
+        inboxEnterAt: tracker.enteredAt,
       });
     try {
       tracker.observe([working]);
