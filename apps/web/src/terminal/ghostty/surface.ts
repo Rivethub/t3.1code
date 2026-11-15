@@ -701,6 +701,7 @@ export class GhosttyTerminalSurface {
 
     const input = document.createElement("textarea");
     input.className = "t3-ghostty-input";
+    input.setAttribute("data-vim-ignore", "");
     input.setAttribute("aria-label", "Terminal input");
     input.autocapitalize = "off";
     input.autocomplete = "off";
