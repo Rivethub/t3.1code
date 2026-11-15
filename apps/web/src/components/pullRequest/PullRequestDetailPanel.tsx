@@ -1884,7 +1884,7 @@ export function PullRequestDetailPanel({
                   checksStale={checksStale}
                   activityError={activityError}
                   pendingFinding={handoff}
-                  fixFindingLabel={handoffLabels.fixFinding}
+                  fixInThisThread={attachTarget !== null}
                   fixCheckLabel={handoffLabels.fixCheck}
                   {...(canFixFindings ? { onFixFinding: startFixFinding } : {})}
                   {...(attachTarget === null ? {} : { onAddToChat: addCommentToChat })}
@@ -1969,7 +1969,7 @@ export function PullRequestDetailPanel({
                     selectedCommitOid={selectedCodeCommitOid}
                     onSelectedCommitChange={selectCodeCommit}
                     pendingFinding={handoff}
-                    fixFindingLabel={handoffLabels.fixFinding}
+                    fixInThisThread={attachTarget !== null}
                     {...(canFixFindings ? { onFixFinding: startFixFinding } : {})}
                     {...(attachTarget === null ? {} : { onAddToChat: addCommentToChat })}
                     onRefresh={refreshDetail}

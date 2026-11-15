@@ -73,6 +73,7 @@ import {
   pullRequestConversationItemComments,
   pullRequestConversationItems,
   pullRequestFindingKey,
+  pullRequestFixFindingLabel,
   pullRequestReviewOutcome,
   visibleBody,
   type PullRequestChatSubject,
@@ -249,11 +250,8 @@ function chatSubject(
 function AddToChatButton({ onClick }: { onClick: () => void }) {
   return (
     <Button size="xs" variant="ghost" className="shrink-0" onClick={onClick}>
-      {/* Wrapped like Fix's label so both sit on the header's baseline. */}
-      <span className="inline-flex items-baseline gap-1">
-        <MessageSquarePlusIcon className="size-3 self-center" />
-        <span>Add to chat</span>
-      </span>
+      <MessageSquarePlusIcon />
+      Add to chat
     </Button>
   );
 }
@@ -451,7 +449,7 @@ export function PullRequestSummaryTab({
   checksStale = false,
   activityError,
   pendingFinding,
-  fixFindingLabel = "Fix in a thread",
+  fixInThisThread = false,
   fixCheckLabel = "Fix",
   onFixFinding,
   onAddToChat,
@@ -470,7 +468,7 @@ export function PullRequestSummaryTab({
   checksStale?: boolean;
   activityError: string | null;
   pendingFinding?: string | null;
-  fixFindingLabel?: string;
+  fixInThisThread?: boolean;
   fixCheckLabel?: string;
   onFixFinding?: (finding: PullRequestFinding) => void;
   /** Absent where there is no composer beside the panel to add a remark to. */
@@ -739,7 +737,7 @@ export function PullRequestSummaryTab({
         key={`${detail.url}:${comment.id}`}
         className="group rounded-lg border border-border/60 bg-background [contain-intrinsic-block-size:160px] [content-visibility:auto]"
       >
-        <div className="flex flex-wrap items-baseline gap-2 rounded-t-lg bg-muted/25 px-3 py-2.5">
+        <div className="flex flex-wrap items-center gap-2 rounded-t-lg bg-muted/25 px-3 py-2.5">
           <div className="flex min-w-0 flex-1 flex-wrap items-baseline gap-2 text-xs text-muted-foreground">
             <CommentIdentity comment={comment} detail={detail} />
             {outcome ? (
@@ -748,27 +746,27 @@ export function PullRequestSummaryTab({
               <span>{reviewStateLabel(comment.reviewState)}</span>
             ) : null}
           </div>
-          {onFixFinding && finding ? (
-            <Button
-              size="xs"
-              variant="ghost"
-              className="shrink-0"
-              disabled={pendingFinding !== null && pendingFinding !== undefined}
-              onClick={() => onFixFinding(finding)}
-            >
-              <span className="inline-flex items-baseline gap-1">
-                <HammerIcon className="size-3 self-center" />
-                <span>
+          {(onFixFinding && finding) || thread !== undefined || (onAddToChat && chat !== null) ? (
+            <div className="flex shrink-0 items-center gap-0.5">
+              {onFixFinding && finding ? (
+                <Button
+                  size="xs"
+                  variant="ghost"
+                  className="shrink-0"
+                  disabled={pendingFinding !== null && pendingFinding !== undefined}
+                  onClick={() => onFixFinding(finding)}
+                >
+                  <HammerIcon />
                   {pendingFinding === pullRequestFindingKey(finding)
                     ? "Preparing..."
-                    : fixFindingLabel}
-                </span>
-              </span>
-            </Button>
-          ) : null}
-          {resolveButtonFor(thread)}
-          {onAddToChat && chat !== null ? (
-            <AddToChatButton onClick={() => onAddToChat(chat)} />
+                    : pullRequestFixFindingLabel(finding, fixInThisThread)}
+                </Button>
+              ) : null}
+              {resolveButtonFor(thread)}
+              {onAddToChat && chat !== null ? (
+                <AddToChatButton onClick={() => onAddToChat(chat)} />
+              ) : null}
+            </div>
           ) : null}
           {reactionBarFor(comment)}
         </div>
@@ -1032,7 +1030,7 @@ export function PullRequestSummaryTab({
                         disabled={pendingFinding !== null && pendingFinding !== undefined}
                         onClick={() => onFixFinding(finding)}
                       >
-                        <HammerIcon className="size-3" />
+                        <HammerIcon />
                         {pendingFinding === pullRequestFindingKey(finding)
                           ? "Preparing..."
                           : fixCheckLabel}

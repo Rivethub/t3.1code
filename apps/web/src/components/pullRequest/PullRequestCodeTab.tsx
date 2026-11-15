@@ -64,6 +64,7 @@ import { useRenderedAppearance } from "~/hooks/useTheme";
 import { areAllDiffFilesCollapsed } from "~/lib/diffCollapse";
 import {
   pullRequestFindingKey,
+  pullRequestFixFindingLabel,
   type PullRequestChatSubject,
   type PullRequestFinding,
 } from "./pullRequestDetail.logic";
@@ -395,7 +396,7 @@ function PullRequestCodeTab({
   selectedCommitOid,
   onSelectedCommitChange,
   pendingFinding,
-  fixFindingLabel = "Fix in a thread",
+  fixInThisThread = false,
   onFixFinding,
   onAddToChat,
   onAddToAgentSelection,
@@ -413,7 +414,7 @@ function PullRequestCodeTab({
   selectedCommitOid: string | null;
   onSelectedCommitChange: (oid: string | null) => void;
   pendingFinding?: string | null;
-  fixFindingLabel?: string;
+  fixInThisThread?: boolean;
   onFixFinding?: (finding: PullRequestFinding) => void;
   /** Absent where there is no composer beside the panel to add a conversation to. */
   onAddToChat?: (subject: PullRequestChatSubject) => void;
@@ -1219,7 +1220,7 @@ function PullRequestCodeTab({
       completionScope={completionScope}
       pending={threadPending}
       fixPending={pendingFinding === pullRequestFindingKey({ kind: "thread", thread })}
-      fixLabel={fixFindingLabel}
+      fixLabel={pullRequestFixFindingLabel({ kind: "thread", thread }, fixInThisThread)}
       {...(onFixFinding ? { onFix: () => onFixFinding({ kind: "thread", thread }) } : {})}
       {...(onAddToChat
         ? { onAddToChat: (loaded) => onAddToChat({ kind: "thread", thread: loaded }) }
