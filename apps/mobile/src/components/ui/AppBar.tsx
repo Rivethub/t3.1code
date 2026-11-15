@@ -3,8 +3,8 @@ import { AppActivityIndicator } from "./AppActivityIndicator";
 import type { HeaderBarButtonMailSearchToolbarItem, SearchBarCommands } from "react-native-screens";
 import { NavigationContext, NavigationRouteContext } from "@react-navigation/native";
 import { use, useId, useLayoutEffect, useRef, useSyncExternalStore } from "react";
-import { View } from "react-native";
-import { createNativeHeaderMenu } from "./nativeHeaderMenu.ios";
+import { Pressable, View } from "react-native";
+import { createNativeHeaderMenu, renderNativeHeaderMenuItems } from "./nativeHeaderMenu.ios";
 import { ScreenHeaderButton } from "./ScreenHeaderButton";
 import { NativeStackScreenOptions, useScreenOptionsWriter } from "../../native/StackHeader";
 import { useNativeWorkspaceColumnsSupported } from "../../native/NativeWorkspaceColumns";
@@ -19,7 +19,7 @@ import {
 } from "../../features/layout/native-mail-search-toolbar";
 import { useAppearancePreferences } from "../../features/settings/appearance/AppearancePreferencesProvider";
 import type { AppBarMenuItem, AppBarProps } from "./AppBar.types";
-import type { AppSymbolName } from "./AppSymbol";
+import { SymbolView, type AppSymbolName } from "./AppSymbol";
 import { useNativeMailSearchToolbar } from "../../native/use-native-mail-search-toolbar";
 import { useControlTheme } from "./useControlTheme";
 
@@ -88,7 +88,11 @@ export function AppBar(props: AppBarProps) {
   const { colors } = useControlTheme();
   const usesNativeMailSearchToolbar = useNativeMailSearchToolbar();
   const { search, menus } = props;
-  const menu = menus?.[0];
+  const confirmMenuTitle = props.confirm?.menu?.title;
+  const menusWithoutConfirm = confirmMenuTitle
+    ? (menus?.filter((entry) => entry.title !== confirmMenuTitle) ?? [])
+    : (menus ?? []);
+  const menu = menusWithoutConfirm[0];
   const searchBarRef = useRef<SearchBarCommands>(null);
   const nativeSearchText = useRef(search?.value ?? "");
   const searchValue = search?.value;
@@ -106,7 +110,7 @@ export function AppBar(props: AppBarProps) {
     search !== undefined &&
     (search.compactToolbar ?? !layout.usesSplitView) &&
     usesNativeMailSearchToolbar;
-  const visibleMenus = compactSearch ? (menus?.slice(1) ?? []) : (menus ?? []);
+  const visibleMenus = compactSearch ? menusWithoutConfirm.slice(1) : menusWithoutConfirm;
   // Where the mail toolbar isn't used, the Duo keeps search at the bottom of the pane like its
   // workspace lists; elsewhere inline search is a button in the bar.
   const duoBottomSearch =
@@ -219,6 +223,77 @@ export function AppBar(props: AppBarProps) {
       props.confirm ||
       closeInspector ? (
         <Toolbar placement="right">
+          {/* First child is trailing-edge on iOS; keep confirm outermost when labelled. */}
+          {props.confirm?.loading ? (
+            <Toolbar.Custom>
+              <View
+                className="size-11 items-center justify-center"
+                accessible
+                accessibilityLabel={props.confirm.accessibilityLabel ?? props.confirm.label}
+                accessibilityState={{ busy: true }}
+              >
+                <AppActivityIndicator colorClassName="accent-prominent-action" />
+              </View>
+            </Toolbar.Custom>
+          ) : props.confirm?.menu ? (
+            // Edit-style glass text (or icon) + Safari-Back long-press: native primaryAction
+            // + menu, no chevron — the glass morphs into the menu on hold.
+            <Toolbar.Button
+              icon={
+                props.confirm.icon
+                  ? iosIcon(props.confirm.icon)
+                  : props.confirm.showLabel
+                    ? undefined
+                    : iosIcon(props.confirm.menu.icon)
+              }
+              label={props.confirm.showLabel ? props.confirm.label : undefined}
+              accessibilityLabel={props.confirm.accessibilityLabel ?? props.confirm.label}
+              accessibilityHint="Shows more actions on long press"
+              disabled={props.confirm.disabled}
+              onPress={props.confirm.onPress}
+              menuTitle={props.confirm.menu.status ?? props.confirm.menu.title}
+              visibilityPriority="high"
+              separateBackground
+            >
+              {renderNativeHeaderMenuItems(props.confirm.menu.items)}
+            </Toolbar.Button>
+          ) : props.confirm?.icon && !props.confirm.showLabel ? (
+            // Custom AppSymbols (e.g. PR glyph) are not SF Symbols — render via SymbolView,
+            // same footprint as other trailing icons (no prominent pill).
+            <Toolbar.Custom>
+              <Pressable
+                accessibilityLabel={props.confirm.accessibilityLabel ?? props.confirm.label}
+                accessibilityRole="button"
+                accessibilityState={{ disabled: Boolean(props.confirm.disabled) }}
+                disabled={props.confirm.disabled}
+                onPress={props.confirm.onPress}
+                className="size-11 items-center justify-center"
+              >
+                <SymbolView
+                  name={props.confirm.icon}
+                  size={22}
+                  tintColorClassName="accent-header-foreground"
+                />
+              </Pressable>
+            </Toolbar.Custom>
+          ) : props.confirm ? (
+            <Toolbar.Button
+              icon={
+                props.confirm.icon
+                  ? iosIcon(props.confirm.icon)
+                  : props.confirm.showLabel
+                    ? undefined
+                    : "checkmark"
+              }
+              label={props.confirm.showLabel ? props.confirm.label : undefined}
+              variant="prominent"
+              visibilityPriority="high"
+              tintColor={colors["--color-prominent-action"]}
+              accessibilityLabel={props.confirm.accessibilityLabel ?? props.confirm.label}
+              disabled={props.confirm.disabled}
+              onPress={props.confirm.onPress}
+            />
+          ) : null}
           {props.actions?.map(({ loading, ...action }) =>
             loading ? (
               <Toolbar.Custom key={action.accessibilityLabel}>
@@ -240,28 +315,6 @@ export function AppBar(props: AppBarProps) {
           )}
           {visibleMenus.map(createNativeHeaderMenu)}
           {props.trailing}
-          {props.confirm?.loading ? (
-            <Toolbar.Custom>
-              <View
-                className="size-11 items-center justify-center"
-                accessible
-                accessibilityLabel={props.confirm.label}
-                accessibilityState={{ busy: true }}
-              >
-                <AppActivityIndicator colorClassName="accent-prominent-action" />
-              </View>
-            </Toolbar.Custom>
-          ) : props.confirm ? (
-            <Toolbar.Button
-              icon="checkmark"
-              variant="prominent"
-              visibilityPriority="high"
-              tintColor={colors["--color-prominent-action"]}
-              accessibilityLabel={props.confirm.label}
-              disabled={props.confirm.disabled}
-              onPress={props.confirm.onPress}
-            />
-          ) : null}
           {closeInspector ? (
             <ScreenHeaderButton
               accessibilityLabel="Close inspector"

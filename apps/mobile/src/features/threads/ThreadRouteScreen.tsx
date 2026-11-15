@@ -114,7 +114,9 @@ import {
   threadRouteOpensDraft,
 } from "./thread-route-hydration";
 import { ThreadHeader } from "./ThreadHeader";
+import { useOpenThreadPullRequests } from "./use-open-thread-pull-requests";
 import { resumeThread } from "./resume-thread";
+import { useThreadPr } from "../../state/use-thread-pr";
 import {
   useAndroidWorkspaceBack,
   useWorkspaceBackNavigation,
@@ -800,6 +802,8 @@ function ThreadRouteContent(
       terminalId: targetTerminalId,
     });
   };
+  const linkedPr = useThreadPr(selectedThread);
+  const openThreadPullRequests = useOpenThreadPullRequests();
   const threadGitControlProps = {
     environmentId: environmentIdRaw ?? "",
     threadId: threadId ?? "",
@@ -812,6 +816,11 @@ function ThreadRouteContent(
     currentBranch: selectedThread?.branch ?? null,
     gitStatus: gitStatus.data,
     gitOperationLabel: gitState.gitOperationLabel,
+    linkedPr,
+    onOpenLinkedPr:
+      selectedThread && linkedPr
+        ? () => openThreadPullRequests(selectedThread, linkedPr)
+        : undefined,
     canOpenTerminal:
       Boolean(selectedThreadProject?.workspaceRoot) && (canReadTerminal || canOperateTerminal),
     canOperateTerminal,
