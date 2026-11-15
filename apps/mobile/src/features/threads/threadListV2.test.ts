@@ -1,5 +1,4 @@
 import { threadSearchMatchKey } from "@t3tools/client-runtime/state/thread-search";
-import { createInboxReturnTracker } from "@t3tools/client-runtime/state/thread-inbox";
 import { presentThreadShell } from "@t3tools/client-runtime/state/models";
 import * as DateTime from "effect/DateTime";
 import * as Schema from "effect/Schema";
@@ -43,6 +42,7 @@ import {
   resolveThreadListV2RowStatus,
   resolveThreadListV2Status,
   resolveThreadListV2WokeAt,
+  threadListInboxReturns,
   threadListV2ListItemsAreEqual,
   threadListV2RowAccessibilityLabel,
   threadHasUnseenCompletion,
@@ -1741,10 +1741,10 @@ describe("Working section beta", () => {
     expect(off.workingCount).toBe(0);
   });
 
-  it("keeps an inactive row in Working during the shared grace and returns it on expiry", () => {
+  it("leaves Working immediately when the mobile tracker has no exit grace", () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date(NOW));
-    const tracker = createInboxReturnTracker();
+    const tracker = threadListInboxReturns;
     const working = makeThread({ id: ThreadId.make("grace"), title: "grace", runtime: running });
     const inactive = { ...working, runtime: null };
     const render = () =>
@@ -1757,12 +1757,10 @@ describe("Working section beta", () => {
     try {
       tracker.observe([working]);
       tracker.observe([inactive]);
-      expect(render().workingCount).toBe(1);
-      expect(render().items[0]?.thread.runtime).toBeNull();
-      vi.advanceTimersByTime(2_000);
       expect(render().workingCount).toBe(0);
       expect(ids(render())).toEqual(["grace"]);
-      expect(tracker.returnedAt(inactive)).toBe(Date.parse(NOW) + 2_000);
+      expect(tracker.returnedAt(inactive)).toBe(Date.parse(NOW));
+      expect(vi.getTimerCount()).toBe(0);
     } finally {
       tracker.observe(null);
       vi.useRealTimers();
