@@ -3,10 +3,15 @@ import { ExternalLinkIcon, TriangleAlertIcon } from "lucide-react";
 
 import { getSourceControlPresentationForKind } from "~/sourceControlPresentation";
 
+import { useNowAfter } from "../../hooks/useDeadline";
+import { usePrimarySettings } from "../../hooks/useSettings";
 import { Button } from "../ui/button";
 import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from "../ui/empty";
 import { RefreshIcon } from "../ui/refresh-icon";
-import { describePullRequestDiffError } from "./pullRequestDiffError";
+import {
+  describePullRequestDiffError,
+  sourceControlRateLimitResumeDeadlineMs,
+} from "./pullRequestDiffError";
 
 export function PullRequestDiffUnavailableState({
   error,
@@ -19,11 +24,15 @@ export function PullRequestDiffUnavailableState({
   url: string;
   onRetry: () => void;
 }) {
+  const timestampFormat = usePrimarySettings((settings) => settings.timestampFormat);
+  const nowMs = useNowAfter(sourceControlRateLimitResumeDeadlineMs(error));
   const { providerName, terminology } = getSourceControlPresentationForKind(provider);
   const { title, description } = describePullRequestDiffError(
     error,
     providerName,
     terminology.singular,
+    timestampFormat,
+    nowMs,
   );
 
   return (

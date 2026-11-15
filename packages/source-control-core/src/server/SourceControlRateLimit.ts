@@ -1,8 +1,10 @@
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
+import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import {
@@ -41,6 +43,17 @@ interface RateLimitEntry {
   readonly retryAt: number;
 }
 
+/** Suffix for user-facing rate-limit copy; ISO so clients can format locally. */
+export function rateLimitResumeSuffix(retryAt: number | undefined): string {
+  if (retryAt === undefined || !Number.isFinite(retryAt)) {
+    return " Requests resume when the limit resets.";
+  }
+  return Option.match(DateTime.make(retryAt), {
+    onNone: () => " Requests resume when the limit resets.",
+    onSome: (instant) => ` Requests resume at ${DateTime.formatIso(instant)}.`,
+  });
+}
+
 export class SourceControlRateLimitPausedError extends Schema.TaggedError<SourceControlRateLimitPausedError>()(
   "SourceControlRateLimitPausedError",
   {
@@ -50,7 +63,7 @@ export class SourceControlRateLimitPausedError extends Schema.TaggedError<Source
   },
 ) {
   get detail(): string {
-    return `${this.provider} requests to ${this.host} are paused until the rate limit resets.`;
+    return `${this.provider} requests to ${this.host} are paused by a rate limit.${rateLimitResumeSuffix(this.retryAt)}`;
   }
 
   override get message(): string {
