@@ -13,6 +13,9 @@ import { expect, it, vi } from "vite-plus/test";
 const state = vi.hoisted(() => ({
   status: "success" as PullRequestCheck["status"],
   extraStatus: null as PullRequestCheck["status"] | null,
+  autoMergeEnabled: false as boolean | undefined,
+  canMergeNow: undefined as boolean | undefined,
+  actions: ["merge"] as Array<"merge" | "enable-auto-merge">,
   mergeMethods: ["merge"] as Array<"merge" | "squash" | "rebase">,
   perform: vi.fn(),
   newThread: vi.fn(),
@@ -59,8 +62,10 @@ const queryData = () => ({
     description: null,
     url: null,
   })),
-  capabilities: { actions: ["merge"], mergeMethods: state.mergeMethods },
-  viewerPermissions: { actions: ["merge"] },
+  autoMergeEnabled: state.autoMergeEnabled,
+  canMergeNow: state.canMergeNow,
+  capabilities: { actions: state.actions, mergeMethods: state.mergeMethods },
+  viewerPermissions: { actions: state.actions },
   mergeCapabilities: {
     merge: state.mergeMethods.includes("merge"),
     squash: state.mergeMethods.includes("squash"),
@@ -232,6 +237,103 @@ it("requires a new merge click after passing checks become pending and pass agai
   expect(state.perform).not.toHaveBeenCalled();
 });
 
+it("hides Merge once auto-merge is armed", async () => {
+  await using screen = await setup();
+  const { container } = screen;
+  const render = () => (
+    <ThreadDetailsPrRow
+      environmentId={EnvironmentId.make("environment")}
+      pr={null}
+      number={1}
+      status={null}
+      project={null}
+      label="Test PR"
+      openAriaLabel="Open PR"
+      onOpen={vi.fn()}
+    />
+  );
+  await act(async () => await screen.rerender(render()));
+  expect(
+    [...container.querySelectorAll("button")].some(
+      (button) => button.textContent?.trim() === "Merge",
+    ),
+  ).toBe(true);
+  await act(async () => {
+    state.autoMergeEnabled = true;
+    await screen.rerender(render());
+  });
+  expect(
+    [...container.querySelectorAll("button")].some(
+      (button) => button.textContent?.trim() === "Merge",
+    ),
+  ).toBe(false);
+});
+
+it("offers enable auto-merge while checks are pending", async () => {
+  await using screen = await setup();
+  const { container } = screen;
+  state.status = "pending";
+  state.actions = ["merge", "enable-auto-merge"];
+  useUiStateStore.getState().setPullRequestMergeMethod("squash");
+  state.mergeMethods = ["merge", "squash"];
+  await act(async () => {
+    await screen.rerender(
+      <ThreadDetailsPrRow
+        environmentId={EnvironmentId.make("environment")}
+        pr={null}
+        number={1}
+        status={null}
+        project={null}
+        label="Test PR"
+        openAriaLabel="Open PR"
+        onOpen={vi.fn()}
+      />,
+    );
+  });
+  const clickEnable = async (scope: ParentNode) =>
+    await act(async () => {
+      [...scope.querySelectorAll("button")]
+        .find((button) => button.textContent?.trim() === "Enable auto-merge")!
+        .click();
+    });
+  await clickEnable(container);
+  const dialog = document.querySelector('[role="alertdialog"]')!;
+  expect(dialog.textContent).toContain("not right away");
+  await clickEnable(dialog);
+  expect(state.perform).toHaveBeenCalledWith("enable-auto-merge", "squash");
+});
+
+it("offers enable auto-merge when branch rules block even if checks pass", async () => {
+  await using screen = await setup();
+  const { container } = screen;
+  state.canMergeNow = false;
+  state.actions = ["merge", "enable-auto-merge"];
+  await act(async () => {
+    await screen.rerender(
+      <ThreadDetailsPrRow
+        environmentId={EnvironmentId.make("environment")}
+        pr={null}
+        number={1}
+        status={null}
+        project={null}
+        label="Test PR"
+        openAriaLabel="Open PR"
+        onOpen={vi.fn()}
+      />,
+    );
+  });
+  expect(
+    [...container.querySelectorAll("button")].some(
+      (button) => button.textContent?.trim() === "Enable auto-merge",
+    ),
+  ).toBe(true);
+  expect(
+    [...container.querySelectorAll("button")].some(
+      (button) => button.textContent?.trim() === "Merge",
+    ),
+  ).toBe(false);
+});
+
 async function setup() {
   state.perform.mockReset();
   state.checkoutError = null;
@@ -245,6 +347,9 @@ async function setup() {
 
   state.status = "success";
   state.extraStatus = null;
+  state.autoMergeEnabled = false;
+  state.canMergeNow = undefined;
+  state.actions = ["merge"];
   state.mergeMethods = ["merge"];
   state.projects = [];
   state.pullRequests = [];
