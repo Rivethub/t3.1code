@@ -2,6 +2,7 @@
 import * as NodeChildProcess from "node:child_process";
 import * as NodeFS from "node:fs";
 import * as NodeNet from "node:net";
+import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import * as NodeURL from "node:url";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
@@ -686,7 +687,7 @@ it.effect.each(["bare", "unborn"] as const)(
         assert.equal(Result.isSuccess(result), state === "bare");
         if (Result.isFailure(result)) {
           assert.equal(result.failure.operation, "GitVcsDriver.createWorktree.createBranch");
-          assert.equal(result.failure.detail, "git branch failed");
+          assert.equal(result.failure.detail, "Git could not find that branch or commit.");
         }
         assert.equal(
           spawnedArgs.filter((args) => args.includes("--git-common-dir")).length,
@@ -2347,7 +2348,7 @@ describe("rejected git refs", () => {
     {
       label: "a ref the remote refused",
       stderr: [
-        "remote: Unable to determine if workflow can be created; workflow scope may be required.",
+        "remote: nothing to commit; workflow scope may be required.",
         `To ${remoteUrl}`,
         " ! [remote rejected] private-branch -> private-branch (workflow scope may be required.)",
         failedPush,
@@ -2377,7 +2378,7 @@ describe("rejected git refs", () => {
 
   // A fetch into a diverged local branch prints the same rejected line, but
   // never "failed to push some refs".
-  it.effect("leaves a rejected fetch unclassified", () =>
+  it.effect("leaves a rejected fetch unclassified without exposing diagnostics", () =>
     Effect.gen(function* () {
       const error = yield* failWith(
         [`From ${remoteUrl}`, " ! [rejected]        main       -> side  (non-fast-forward)"].join(
@@ -2387,6 +2388,7 @@ describe("rejected git refs", () => {
 
       assert.equal(error.reason, undefined);
       assert.equal(error.detail, "Git command exited with a non-zero status.");
+      for (const text of leakedText) assert.notInclude(error.message, text);
     }),
   );
 });
@@ -2478,18 +2480,28 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
     }),
   );
   describe("structured errors", () => {
-    it.effect("does not retain git arguments or stderr in command failures", () =>
+    it.effect.each([
+      ...[
+        "secret-token-value",
+        "prefix123=private-secret",
+        "tiny",
+        "status=private-secret",
+        "prefix-status-private-secret",
+        "Bearer token=private-secret",
+        "private-secret\ncontinued",
+      ].map((secret) => ({ secret, args: ["status", `--unknown-option=${secret}`] })),
+      { secret: "private-secret", args: ["status", "--private-secret"] },
+    ])("does not retain git argument $secret in command failures", ({ secret, args }) =>
       Effect.gen(function* () {
         const cwd = yield* makeTmpDir();
         const driver = yield* GitVcsDriver.GitVcsDriver;
         yield* driver.initRepo({ cwd });
 
-        const secret = "secret-token-value";
         const error = yield* driver
           .execute({
             operation: "GitVcsDriver.test.redactedFailure",
             cwd,
-            args: ["status", `--unknown-option=${secret}`],
+            args,
           })
           .pipe(Effect.flip);
 
@@ -2502,7 +2514,9 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
         });
         assert.isNumber(error.exitCode);
         assert.isAbove(error.stderrLength ?? 0, 0);
+        assert.equal(error.detail, "Git command exited with a non-zero status.");
         assert.notInclude(error.detail, secret);
+        assert.notInclude(error.message, secret.split("=").at(-1)!.split("\n")[0]!);
         assert.notInclude(error.message, secret);
         assert.notProperty(error, "args");
         assert.notProperty(error, "stderr");
@@ -2530,6 +2544,107 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
           detail: "Failed to spawn Git process.",
         });
       }),
+    );
+
+    it.effect("names a missing author identity behind a failed commit", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        const delegate = yield* ChildProcessSpawner.ChildProcessSpawner;
+        const spawner = ChildProcessSpawner.make((command) => {
+          if (!ChildProcess.isStandardCommand(command) || command.args[0] !== "commit") {
+            return delegate.spawn(command);
+          }
+          assert.equal(command.options.env?.LANGUAGE, "C");
+          return delegate.spawn(
+            ChildProcess.make(command.command, command.args, {
+              ...command.options,
+              env: {
+                ...command.options.env,
+                GIT_CONFIG_GLOBAL: NodeOS.devNull,
+                GIT_CONFIG_NOSYSTEM: "1",
+                GIT_CONFIG_COUNT: "2",
+                GIT_CONFIG_KEY_0: "user.name",
+                GIT_CONFIG_VALUE_0: "",
+                GIT_CONFIG_KEY_1: "user.email",
+                GIT_CONFIG_VALUE_1: "",
+              },
+            }),
+          );
+        });
+        const driver = yield* makeGitVcsDriverCore().pipe(
+          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+          Effect.provide(layerServerConfig),
+        );
+        yield* driver.initRepo({ cwd });
+        yield* writeTextFile(cwd, "README.md", "hello\n");
+        yield* git(cwd, ["add", "README.md"]);
+
+        const error = yield* driver.commit(cwd, "initial", "").pipe(Effect.flip);
+
+        assert.deepInclude(error, {
+          _tag: "GitCommandError",
+          reason: "author_identity_unknown",
+        });
+        assert.include(error.detail, "user.name");
+        assert.include(error.detail, "user.email");
+      }),
+    );
+
+    it.effect.each([false, true])(
+      "names a commit without staged changes (unstaged: %s)",
+      (unstaged) =>
+        Effect.gen(function* () {
+          const cwd = yield* makeTmpDir();
+          const driver = yield* GitVcsDriver.GitVcsDriver;
+          yield* initRepoWithCommit(cwd);
+
+          if (unstaged) yield* writeTextFile(cwd, "README.md", "unstaged changes\n");
+          const error = yield* driver.commit(cwd, "empty", "").pipe(Effect.flip);
+
+          assert.deepInclude(error, {
+            _tag: "GitCommandError",
+            reason: "nothing_to_commit",
+          });
+          assert.include(error.detail, "Nothing to commit");
+        }),
+    );
+
+    it.effect.each(
+      ["https", "Bearer", "-sensitive-subject"].flatMap((subject) =>
+        ["stdout", "stderr"].map((stream) => ({ subject, stream })),
+      ),
+    )(
+      "surfaces a rejected commit hook safely (subject: $subject, stream: $stream)",
+      ({ subject, stream }) =>
+        Effect.gen(function* () {
+          const cwd = yield* makeTmpDir();
+          const driver = yield* GitVcsDriver.GitVcsDriver;
+          const fs = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          yield* initRepoWithCommit(cwd);
+          yield* writeTextFile(cwd, "README.md", "changed\n");
+          yield* git(cwd, ["add", "README.md"]);
+          yield* writeTextFile(
+            cwd,
+            ".git/hooks/pre-commit",
+            `#!/bin/sh\necho 'error: arbitrary-hook-secret; lint: fix formatting in README.md; https://user:private-secret@host/repo?token=query-secret; Authorization: Bearer TOKEN123; rejected commit -sensitive-subject' ${stream === "stderr" ? ">&2" : ""}\nexit 1\n`,
+          );
+          yield* fs.chmod(path.join(cwd, ".git/hooks/pre-commit"), 0o755);
+
+          const error = yield* driver.commit(cwd, subject, "").pipe(Effect.flip);
+
+          assert.notProperty(error, "reason");
+          assert.equal(error.detail, "Git command exited with a non-zero status.");
+          if (subject.startsWith("-")) assert.notInclude(error.message, subject);
+          for (const secret of [
+            "arbitrary-hook-secret",
+            "private-secret",
+            "query-secret",
+            "TOKEN123",
+          ]) {
+            assert.notInclude(error.message, secret);
+          }
+        }),
     );
 
     // regression: #8645 name the cause of a failed git command
@@ -2589,55 +2704,57 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
     );
 
     it.effect.each([
-      { action: "worktree add", detail: "git worktree add failed" },
-      { action: "worktree add -b", detail: "git branch failed" },
-      { action: "switch", detail: "git checkout failed" },
-    ])(
-      "reports a missing ref during $action with stable, redacted diagnostics",
-      ({ action, detail }) =>
-        Effect.gen(function* () {
-          const cwd = yield* makeTmpDir();
-          yield* initRepoWithCommit(cwd);
-          const path = yield* Path.Path;
-          const refName = "private/deleted-base";
-          const locales: Array<CommandLine.Word | undefined> = [];
-          const delegate = yield* ChildProcessSpawner.ChildProcessSpawner;
-          const spawner = ChildProcessSpawner.make((command) => {
-            if (
-              ChildProcess.isStandardCommand(command) &&
-              !command.args.includes("-h") &&
-              (command.args.includes("worktree") ||
-                command.args[0] === "branch" ||
-                command.args[0] === "checkout")
-            ) {
-              locales.push(command.options.env?.LANGUAGE);
-            }
-            return delegate.spawn(command);
-          });
-          const driver = yield* makeGitVcsDriverCore().pipe(
-            Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
-            Effect.provide(layerServerConfig),
-          );
-          const error =
-            action === "switch"
-              ? yield* driver.switchRef({ cwd, refName }).pipe(Effect.flip)
-              : yield* driver
-                  .createWorktree({
-                    cwd,
-                    refName,
-                    ...(action === "worktree add -b" ? { newRefName: "t3/new-thread" } : {}),
-                    path: path.join(cwd, "worktree"),
-                  })
-                  .pipe(Effect.flip);
+      { action: "worktree add" as const },
+      { action: "worktree add -b" as const },
+      { action: "switch" as const },
+    ])("reports a missing ref during $action with stable, redacted diagnostics", ({ action }) =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        yield* initRepoWithCommit(cwd);
+        const path = yield* Path.Path;
+        const refName = "private/deleted-base";
+        const locales: Array<CommandLine.Word | undefined> = [];
+        const delegate = yield* ChildProcessSpawner.ChildProcessSpawner;
+        const spawner = ChildProcessSpawner.make((command) => {
+          if (
+            ChildProcess.isStandardCommand(command) &&
+            !command.args.includes("-h") &&
+            (command.args.includes("worktree") ||
+              command.args[0] === "branch" ||
+              command.args[0] === "checkout")
+          ) {
+            locales.push(command.options.env?.LANGUAGE);
+          }
+          return delegate.spawn(command);
+        });
+        const driver = yield* makeGitVcsDriverCore().pipe(
+          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+          Effect.provide(layerServerConfig),
+        );
+        const error =
+          action === "switch"
+            ? yield* driver.switchRef({ cwd, refName }).pipe(Effect.flip)
+            : yield* driver
+                .createWorktree({
+                  cwd,
+                  refName,
+                  ...(action === "worktree add -b" ? { newRefName: "t3/new-thread" } : {}),
+                  path: path.join(cwd, "worktree"),
+                })
+                .pipe(Effect.flip);
 
-          assert.deepInclude(error, { _tag: "GitCommandError", detail, reason: "ref_not_found" });
-          assert.include(error.message, `${detail} (ref_not_found)`);
-          assert.notInclude(error.message, refName);
-          assert.notInclude(yield* encodeGitCommandError(error), refName);
-          assert.deepEqual(locales, ["C"]);
-          assert.notProperty(error, "stderr");
-          assert.notProperty(error, "args");
-        }),
+        assert.deepInclude(error, {
+          _tag: "GitCommandError",
+          detail: "Git could not find that branch or commit.",
+          reason: "ref_not_found",
+        });
+        assert.include(error.message, "Git could not find that branch or commit. (ref_not_found)");
+        assert.notInclude(error.message, refName);
+        assert.notInclude(yield* encodeGitCommandError(error), refName);
+        assert.deepEqual(locales, ["C"]);
+        assert.notProperty(error, "stderr");
+        assert.notProperty(error, "args");
+      }),
     );
 
     it.effect("explains a non-fast-forward push from a host with a translated Git", () =>
@@ -2769,6 +2886,15 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
         label: "a pathspec worded like a diagnostic",
         args: ["checkout", "HEAD", "--", "fatal: invalid reference: missing"],
       },
+      ...[
+        "signing failed",
+        "gpg failed to sign",
+        "no ssh public key",
+        "Author identity unknown",
+      ].map((name) => ({
+        label: `a pathspec named ${name}`,
+        args: ["checkout", "HEAD", "--", name],
+      })),
       // The tag exists; it names a tree, which git reports in the same words.
       {
         label: "a worktree from a non-commit",
