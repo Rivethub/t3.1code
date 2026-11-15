@@ -37,7 +37,6 @@ import {
 } from "react-native";
 import { NativeScrollViewMarker as ScrollViewMarker } from "../../native/NativeScrollViewMarker";
 import { GestureDetector, useNativeGesture } from "react-native-gesture-handler";
-import type { SwipeableMethods } from "react-native-gesture-handler/ReanimatedSwipeable";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { cn } from "../../lib/cn";
@@ -96,6 +95,7 @@ import {
 } from "./homeThreadList";
 import { createSwipeRowActivation } from "./swipe-row-activation";
 import { SwipeableScrollGateProvider, useSwipeableScrollGate } from "./thread-swipe-actions";
+import { useOpenThreadSwipeable } from "./use-open-thread-swipeable";
 import { useFabScroll } from "./FabScrollContext";
 import { holdLaunchSplashForHomeRows, settleLaunchSplashHomeRows } from "./home-launch-splash";
 import { useWorkspaceTabs } from "../layout/workspace/WorkspaceTabsContext";
@@ -206,7 +206,12 @@ export function HomeScreen(props: HomeScreenProps) {
   const selectedThreadKey = activeNewTask ? null : (primaryColumn?.selectedThreadKey ?? null);
   const fullSwipeWidth = primaryColumn && columnMetrics ? columnMetrics.width - 20 : undefined;
   const queuedThreadKeys = useQueuedThreadKeys();
-  const openSwipeableRef = useRef<SwipeableMethods | null>(null);
+  const {
+    handleSwipeableWillOpen,
+    handleSwipeableClose,
+    closeOpenSwipeable,
+    consumeOpenSwipeable,
+  } = useOpenThreadSwipeable();
   const homeScrollGesture = useNativeGesture();
   const insets = useSafeAreaInsets();
   const contentTopInset = useContentTopInset();
@@ -243,29 +248,20 @@ export function HomeScreen(props: HomeScreenProps) {
           )
         ? [props.selectedEnvironmentId]
         : [];
-  const handleSwipeableWillOpen = (methods: SwipeableMethods) => {
-    if (openSwipeableRef.current !== methods) {
-      openSwipeableRef.current?.close();
-      openSwipeableRef.current = methods;
-    }
-  };
-
-  const handleSwipeableClose = (methods: SwipeableMethods) => {
-    if (openSwipeableRef.current === methods) {
-      openSwipeableRef.current = null;
-    }
-  };
-
   const handleScrollBeginDrag = () => {
-    openSwipeableRef.current?.close();
+    closeOpenSwipeable();
   };
   const openThreadPullRequests = useOpenThreadPullRequests();
   const handleOpenThreadPullRequests = (
     thread: EnvironmentThreadShell,
     pr: ThreadPrPresentation,
   ) => {
-    openSwipeableRef.current?.close();
+    if (consumeOpenSwipeable()) return;
     openThreadPullRequests(thread, pr);
+  };
+  const handleSelectPendingTask = (pendingTask: PendingNewTask) => {
+    if (consumeOpenSwipeable()) return;
+    props.onSelectPendingTask(pendingTask);
   };
   const onFabScroll = useFabScroll();
   const listRef = useRef<LegendListRef>(null);
@@ -388,6 +384,18 @@ export function HomeScreen(props: HomeScreenProps) {
     toggleSnoozedShelf,
     toggleWorkingShelf,
   } = useThreadListV2ShelfPreferences();
+  const handleToggleWorkingShelf = () => {
+    if (consumeOpenSwipeable()) return;
+    toggleWorkingShelf();
+  };
+  const handleToggleSnoozedShelf = () => {
+    if (consumeOpenSwipeable()) return;
+    toggleSnoozedShelf();
+  };
+  const handleToggleSettledShelf = () => {
+    if (consumeOpenSwipeable()) return;
+    toggleSettledShelf();
+  };
   const now = useThreadListNow(props.threads);
   const listEnvironments = useAtomValue(threadListEnvironmentsAtom);
   const {
@@ -436,7 +444,7 @@ export function HomeScreen(props: HomeScreenProps) {
   const { onSelectThread } = props;
   // A row listed for a message match opens the thread at that message, by
   // tap or by shortcut.
-  const selectThread = (thread: EnvironmentThreadShell) => {
+  const openThread = (thread: EnvironmentThreadShell) => {
     const key = threadSearchMatchKey({ environmentId: thread.environmentId, threadId: thread.id });
     const messageId = contentOnlyThreadKeys.has(key)
       ? threadSearchMatchByKey.get(key)?.messageId
@@ -446,7 +454,15 @@ export function HomeScreen(props: HomeScreenProps) {
     }
     onSelectThread(thread);
   };
-  useThreadJumpShortcuts(threadListV2Items, selectThread);
+  const selectThreadFromTap = (thread: EnvironmentThreadShell) => {
+    if (consumeOpenSwipeable()) return;
+    openThread(thread);
+  };
+  const selectThreadFromShortcut = (thread: EnvironmentThreadShell) => {
+    closeOpenSwipeable();
+    openThread(thread);
+  };
+  useThreadJumpShortcuts(threadListV2Items, selectThreadFromShortcut);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- reads the list's visible range after commit to enable swipe gestures on those rows
   useEffect(() => {
     if (swipeEnabled) activateVisibleRows(threadListV2Items);
@@ -478,7 +494,7 @@ export function HomeScreen(props: HomeScreenProps) {
           environmentMachine={machineByEnvironmentId.get(item.pendingTask.environmentId)}
           showPendingDivider={item.showPendingDivider}
           showTrailingDivider={item.showTrailingDivider}
-          onSelectPendingTask={props.onSelectPendingTask}
+          onSelectPendingTask={handleSelectPendingTask}
           onDeletePendingTask={props.onDeletePendingTask}
           fullSwipeWidth={fullSwipeWidth}
           onSwipeableClose={handleSwipeableClose}
@@ -494,7 +510,7 @@ export function HomeScreen(props: HomeScreenProps) {
           count={item.count}
           disabled={item.disabled}
           expanded={item.expanded}
-          onToggle={toggleWorkingShelf}
+          onToggle={handleToggleWorkingShelf}
         />
       );
     }
@@ -504,7 +520,7 @@ export function HomeScreen(props: HomeScreenProps) {
           count={item.count}
           disabled={item.disabled}
           expanded={item.expanded}
-          onToggle={toggleSnoozedShelf}
+          onToggle={handleToggleSnoozedShelf}
         />
       );
     }
@@ -514,7 +530,7 @@ export function HomeScreen(props: HomeScreenProps) {
           count={item.count}
           disabled={item.disabled}
           expanded={item.expanded}
-          onToggle={toggleSettledShelf}
+          onToggle={handleToggleSettledShelf}
         />
       );
     }
@@ -555,7 +571,7 @@ export function HomeScreen(props: HomeScreenProps) {
             : undefined
         }
         searchQuery={threadSearch.query}
-        onSelectThread={selectThread}
+        onSelectThread={selectThreadFromTap}
         onOpenThreadPullRequests={handleOpenThreadPullRequests}
         onDeleteThread={handleDeleteThread}
         onArchiveThread={props.onArchiveThread}
@@ -691,8 +707,19 @@ export function HomeScreen(props: HomeScreenProps) {
           }))}
           selectedEnvironmentId={props.selectedEnvironmentId}
           selectedProjectKey={props.selectedProjectKey}
-          onEnvironmentChange={props.onEnvironmentChange}
-          onProjectChange={props.onProjectChange}
+          onEnvironmentChange={(environmentId) => {
+            if (consumeOpenSwipeable()) return;
+            props.onEnvironmentChange(environmentId);
+          }}
+          onProjectChange={(projectKey) => {
+            if (consumeOpenSwipeable()) return;
+            props.onProjectChange(projectKey);
+          }}
+          onResetFilters={() => {
+            if (consumeOpenSwipeable()) return;
+            props.onEnvironmentChange(null);
+            props.onProjectChange(null);
+          }}
         />
       ) : null}
     </>
@@ -783,6 +810,7 @@ export function HomeScreen(props: HomeScreenProps) {
                           ? { state: "failed" as const }
                           : {})}
                       onPress={() => {
+                        if (consumeOpenSwipeable()) return;
                         olderSettledShelf.retry();
                         showMoreSettled();
                       }}
