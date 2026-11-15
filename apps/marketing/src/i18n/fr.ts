@@ -46,6 +46,18 @@ export const fr: Messages = {
       "Changez de modèle en cours de fil.",
       "De nouveaux agents chaque semaine.",
     ],
+    demoEyebrow: "Démo mise en scène",
+    demoTitle: "Une demande. Specialistes, Thread Details, revue sur telephone.",
+    demoBody:
+      "Lancez un court parcours GUI: un fil principal delegue des specialistes dans des worktrees, le travail apparait dans Thread Details, une demande en attente s'affiche, et vous terminez la revue depuis le telephone. Illustration uniquement.",
+    demoLabel: "Histoire illustree. Aucun agent ne tourne ici.",
+    demoPlay: "Lire",
+    demoReplay: "Rejouer",
+    demoPlaying: "Lecture de l'histoire mise en scene...",
+    demoComplete: "Fin de l'histoire mise en scene",
+    demoWindowTitle: "checkout-flake · lead",
+    demoVisualLabel:
+      "Illustration mise en scene d'un parcours GUI T3 Code: cartes de delegation, travail dans Thread Details, demande en attente et revue telephone.",
     gitVisualLabel:
       "Illustration du flux Git de T3 Code : relire un diff, commiter et pousser les modifications, puis ouvrir une pull request.",
     prReady: "Prête",

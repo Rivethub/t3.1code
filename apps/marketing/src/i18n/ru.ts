@@ -45,6 +45,18 @@ export const ru: Messages = {
       "Меняйте модель прямо посреди треда.",
       "Новые агенты каждую неделю.",
     ],
+    demoEyebrow: "Инсценированное демо",
+    demoTitle: "Один запрос. Специалисты, Thread Details, проверка с телефона.",
+    demoBody:
+      "Проиграйте короткий GUI-сценарий: ведущий тред отдаёт специалистов в worktree, работа появляется в Thread Details, pending request ждёт, и вы завершаете ревью с телефона. Только иллюстрация.",
+    demoLabel: "Иллюстрированная история. Агенты здесь не запускаются.",
+    demoPlay: "Смотреть",
+    demoReplay: "Ещё раз",
+    demoPlaying: "Идёт инсценированная история...",
+    demoComplete: "Конец инсценированной истории",
+    demoWindowTitle: "checkout-flake · lead",
+    demoVisualLabel:
+      "Инсценированная иллюстрация GUI-сценария T3 Code: карточки делегирования, Work в Thread Details, pending approval и ревью с телефона.",
     gitVisualLabel:
       "Схема работы с Git в T3 Code: просмотр диффа, коммит и пуш изменений, создание пул-реквеста.",
     prReady: "Готово",

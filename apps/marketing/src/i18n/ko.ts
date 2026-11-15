@@ -45,6 +45,18 @@ export const ko: Messages = {
       "스레드 도중 모델 전환.",
       "매주 새 에이전트 추가.",
     ],
+    demoEyebrow: "연출 데모",
+    demoTitle: "한 번의 요청. 스페셜리스트, Thread Details, 폰 리뷰.",
+    demoBody:
+      "짧은 GUI 여정을 재생하세요: 리드 스레드가 스페셜리스트를 worktree에 위임하고, Work가 Thread Details에 나타나며, pending request가 대기하고, 폰에서 리뷰를 마칩니다. 일러스트만.",
+    demoLabel: "일러스트 스토리. 이 페이지에서는 에이전트가 실행되지 않습니다.",
+    demoPlay: "재생",
+    demoReplay: "다시 보기",
+    demoPlaying: "연출 스토리 재생 중...",
+    demoComplete: "연출 스토리 끝",
+    demoWindowTitle: "checkout-flake · lead",
+    demoVisualLabel:
+      "T3 Code GUI 여정의 연출 일러스트: 위임 카드, Thread Details의 Work, pending 승인, 폰 리뷰.",
     gitVisualLabel:
       "T3 Code Git 워크플로 그림: diff를 검토하고, 변경 사항을 커밋 및 푸시하고, 풀 리퀘스트를 엽니다.",
     prReady: "준비됨",

@@ -45,6 +45,18 @@ export const zh: Messages = {
       "线程进行中也能切换模型。",
       "每周都有新的智能体接入。",
     ],
+    demoEyebrow: "示意演示",
+    demoTitle: "一次请求。专家、Thread Details、手机审阅。",
+    demoBody:
+      "播放一段短 GUI 旅程：主线程把专家委派到 worktree，Work 出现在 Thread Details，待处理请求在等待，你从手机完成审阅。仅作示意。",
+    demoLabel: "图解故事。本页不会真正运行智能体。",
+    demoPlay: "播放",
+    demoReplay: "重播",
+    demoPlaying: "正在播放示意故事...",
+    demoComplete: "示意故事结束",
+    demoWindowTitle: "checkout-flake · lead",
+    demoVisualLabel:
+      "T3 Code GUI 旅程的示意插画：委派卡片、Thread Details 中的 Work、待审批，以及手机审阅。",
     gitVisualLabel: "T3 Code Git 工作流示意图：审查 diff、提交并推送更改、创建 PR。",
     prReady: "就绪",
     prCommits: "3 个提交",
