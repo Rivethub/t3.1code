@@ -947,6 +947,7 @@ function ResourceTelemetryDiagnosticsBody({
   const hasHostPowerSignal =
     snapshot !== null &&
     (snapshot.power.onBattery !== "unknown" ||
+      snapshot.power.batteryPercent !== undefined ||
       snapshot.power.lowPowerMode !== "unknown" ||
       snapshot.power.idle !== "unknown" ||
       snapshot.power.locked !== "unknown" ||
@@ -1116,6 +1117,9 @@ function ResourceTelemetryDiagnosticsBody({
                     false: "External power",
                   })}
                 />
+                {snapshot.power.batteryPercent !== undefined ? (
+                  <DetailRow label="Battery life" value={`${snapshot.power.batteryPercent}%`} />
+                ) : null}
                 <DetailRow
                   label="Low power mode"
                   value={booleanStateLabel(snapshot.power.lowPowerMode, {

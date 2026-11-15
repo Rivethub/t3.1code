@@ -31,6 +31,7 @@ import * as BackgroundPolicy from "./background/BackgroundPolicy.ts";
 import * as HostPowerMonitor from "./background/HostPowerMonitor.ts";
 import * as NonBlockingSpawner from "./process/NonBlockingSpawner.ts";
 import * as KeepAwake from "./background/KeepAwake.ts";
+import * as NodeHostPower from "./background/NodeHostPower.ts";
 import * as ServerConfig from "./config.ts";
 import { withUntracedRequests } from "./http.ts";
 import * as ServerHttp from "./http.ts";
@@ -283,13 +284,17 @@ const layerDesktopTelemetryReceiver = DesktopTelemetryReceiver.layer.pipe(
   Layer.provideMerge(layerServerSettings),
 );
 
+const layerHostPowerMonitor = HostPowerMonitor.layer.pipe(
+  Layer.provide(layerDesktopTelemetryReceiver),
+);
+
 const layerResourceTelemetry = ResourceTelemetry.layer.pipe(
   Layer.provideMerge(layerNativeTelemetry),
   Layer.provideMerge(layerDesktopTelemetryReceiver),
-);
-
-const layerHostPowerMonitor = HostPowerMonitor.layer.pipe(
-  Layer.provide(layerDesktopTelemetryReceiver),
+  // Headless hosts have no Electron power feed; sample battery life into the same
+  // HostPowerMonitor ResourceTelemetry reads (one provide keeps a single instance).
+  Layer.provideMerge(NodeHostPower.layer),
+  Layer.provide(layerHostPowerMonitor),
 );
 
 // A fresh receiver layer would open a second reader on the desktop telemetry fd.
