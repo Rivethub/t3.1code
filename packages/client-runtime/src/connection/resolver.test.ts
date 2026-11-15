@@ -14,16 +14,21 @@ import * as ClientCapabilities from "../platform/capabilities.ts";
 import * as RemoteEnvironmentAuthorization from "../authorization/service.ts";
 import {
   BearerConnectionCredential,
+  BearerConnectionProfile,
   type ConnectionCatalogEntry,
   SshConnectionProfile,
   type ConnectionCredential,
   type ConnectionProfile,
 } from "./catalog.ts";
+import * as ManagedRelay from "../relay/managedRelay.ts";
 import * as ConnectionCredentialStore from "./credentialStore.ts";
+import * as GatewayHop from "./gatewayHop.ts";
 import {
+  BearerConnectionTarget,
   ConnectionTransientError,
   PrimaryConnectionTarget,
   SshConnectionTarget,
+  ticketedHttpBaseUrl,
   type ConnectionTarget,
 } from "./model.ts";
 import * as ConnectionProfileStore from "./profileStore.ts";
@@ -129,20 +134,22 @@ const makeDependencies = Effect.fn("TestConnectionResolver.makeDependencies")((o
   });
 
   const layerDependencies = Layer.mergeAll(
-    RpcHttp.layerRemoteHttpClient((() =>
+    RpcHttp.layerRemoteHttpClient(((request) =>
       Promise.resolve(
-        Response.json({
-          environmentId: ENVIRONMENT_ID,
-          label: "Compatible environment",
-          platform: { os: "linux", arch: "x64" },
-          serverVersion: "0.0.0-test",
-          ...(options?.descriptorProtocolVersion === undefined
-            ? { orchestrationProtocolVersion: ORCHESTRATION_PROTOCOL_VERSION }
-            : options.descriptorProtocolVersion === null
-              ? {}
-              : { orchestrationProtocolVersion: options.descriptorProtocolVersion }),
-          capabilities: { repositoryIdentity: true },
-        }),
+        String(request).includes("/api/auth/websocket-ticket/media")
+          ? Response.json({ ticket: "hop-ticket", expiresAt: "2026-05-01T12:05:00.000Z" })
+          : Response.json({
+              environmentId: ENVIRONMENT_ID,
+              label: "Compatible environment",
+              platform: { os: "linux", arch: "x64" },
+              serverVersion: "0.0.0-test",
+              ...(options?.descriptorProtocolVersion === undefined
+                ? { orchestrationProtocolVersion: ORCHESTRATION_PROTOCOL_VERSION }
+                : options.descriptorProtocolVersion === null
+                  ? {}
+                  : { orchestrationProtocolVersion: options.descriptorProtocolVersion }),
+              capabilities: { repositoryIdentity: true },
+            }),
       )) satisfies typeof fetch),
     Layer.succeed(
       ConnectionProfileStore.ConnectionProfileStore,
@@ -165,7 +172,16 @@ const makeDependencies = Effect.fn("TestConnectionResolver.makeDependencies")((o
     Layer.succeed(ClientCapabilities.SshEnvironmentGateway, ssh),
   );
 
-  return Effect.succeed(ConnectionResolver.layer.pipe(Layer.provide(layerDependencies)));
+  return Effect.succeed(
+    ConnectionResolver.layer.pipe(
+      Layer.provideMerge(
+        GatewayHop.layer.pipe(
+          Layer.provideMerge(layerDependencies),
+          Layer.provide(Layer.mock(ManagedRelay.ManagedRelayDpopSigner)({})),
+        ),
+      ),
+    ),
+  );
 });
 
 describe("ConnectionResolver", () => {
@@ -216,6 +232,98 @@ describe("ConnectionResolver", () => {
           capabilities: { repositoryIdentity: true },
         },
       });
+    }),
+  );
+
+  it.effect("blocks a LAN gateway peer route when the gateway host is not connected", () =>
+    Effect.gen(function* () {
+      const gatewayId = EnvironmentId.make("env_gateway");
+      const target = new BearerConnectionTarget({
+        environmentId: ENVIRONMENT_ID,
+        label: "Peer",
+        connectionId: `gateway:${gatewayId}:${ENVIRONMENT_ID}@lan`,
+      });
+      const profile = new BearerConnectionProfile({
+        connectionId: target.connectionId,
+        environmentId: ENVIRONMENT_ID,
+        label: "Peer",
+        httpBaseUrl: `https://gateway.example/__t3_gateway/${ENVIRONMENT_ID}/`,
+        wsBaseUrl: `wss://gateway.example/__t3_gateway/${ENVIRONMENT_ID}/`,
+        learned: true,
+        gatewayEnvironmentId: gatewayId,
+      });
+      const layerBroker = yield* makeDependencies({
+        credentials: [["lan", new BearerConnectionCredential({ token: "peer-token" })]],
+      });
+      const broker = yield* ConnectionResolver.ConnectionResolver.pipe(Effect.provide(layerBroker));
+      const error = yield* Effect.flip(broker.prepare(catalogEntry(target, Option.some(profile))));
+      expect(error).toMatchObject({ reason: "remote-unavailable" });
+      expect(error.message).toContain("LAN gateway host is not connected");
+    }),
+  );
+
+  it.effect("spends a hop ticket on the attempt but keeps it out of the prepared base URL", () =>
+    Effect.gen(function* () {
+      const gatewayId = EnvironmentId.make("env_gateway");
+      const httpBaseUrl = `https://gateway.example/__t3_gateway/${ENVIRONMENT_ID}/`;
+      const target = new BearerConnectionTarget({
+        environmentId: ENVIRONMENT_ID,
+        label: "Peer",
+        connectionId: `gateway:${gatewayId}:${ENVIRONMENT_ID}@lan`,
+      });
+      const profile = new BearerConnectionProfile({
+        connectionId: target.connectionId,
+        environmentId: ENVIRONMENT_ID,
+        label: "Peer",
+        httpBaseUrl,
+        wsBaseUrl: `wss://gateway.example/__t3_gateway/${ENVIRONMENT_ID}/`,
+        learned: true,
+        gatewayEnvironmentId: gatewayId,
+      });
+      const attempted: Array<string> = [];
+      const layerBroker = yield* makeDependencies({
+        credentials: [["lan", new BearerConnectionCredential({ token: "peer-token" })]],
+        authorizeBearer: (input) =>
+          Effect.sync(() => {
+            attempted.push(input.httpBaseUrl, input.wsBaseUrl);
+            return {
+              environmentId: input.expectedEnvironmentId,
+              label: "Peer",
+              httpBaseUrl: input.httpBaseUrl,
+              socketUrl: `${input.wsBaseUrl}&wsTicket=peer`,
+              httpAuthorization: { _tag: "Bearer" as const, token: input.bearerToken },
+            };
+          }),
+      });
+      yield* Effect.gen(function* () {
+        const hop = yield* GatewayHop.GatewayHopAuthorization;
+        yield* hop.remember(
+          gatewayId,
+          Option.some({
+            environmentId: gatewayId,
+            label: "Gateway",
+            httpBaseUrl: "https://gateway.example/",
+            socketUrl: "wss://gateway.example/ws",
+            httpAuthorization: { _tag: "Bearer", token: "gateway-token" },
+            target: new BearerConnectionTarget({
+              environmentId: gatewayId,
+              label: "Gateway",
+              connectionId: "gateway",
+            }),
+          }),
+        );
+        const broker = yield* ConnectionResolver.ConnectionResolver;
+        const prepared = yield* broker.prepare(catalogEntry(target, Option.some(profile)));
+
+        expect(attempted).toEqual([
+          `${httpBaseUrl}?gatewayTicket=hop-ticket`,
+          `wss://gateway.example/__t3_gateway/${ENVIRONMENT_ID}/?gatewayTicket=hop-ticket`,
+        ]);
+        expect(prepared.httpBaseUrl).toBe(httpBaseUrl);
+        expect(yield* ticketedHttpBaseUrl(prepared)).toBe(
+          `${httpBaseUrl}?gatewayTicket=hop-ticket`,
+        );
+      }).pipe(Effect.provide(layerBroker));
     }),
   );
 

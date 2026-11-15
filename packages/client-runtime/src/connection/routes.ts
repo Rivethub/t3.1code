@@ -4,9 +4,14 @@ import {
   isSharedAddressSpaceHost,
   isTailnetHost,
 } from "@t3tools/shared/hostClassification";
-import type { DesktopSshEnvironmentTarget } from "@t3tools/contracts";
+import {
+  EnvironmentId,
+  type DesktopSshEnvironmentTarget,
+  type LanGatewayPeerAdvertisement,
+} from "@t3tools/contracts";
 import * as Option from "effect/Option";
 
+import { gatewayPeerHttpBaseUrl } from "../environment/endpoint.ts";
 import {
   BearerConnectionProfile,
   type ConnectionCatalogEntry,
@@ -16,6 +21,7 @@ import { BearerConnectionTarget, type ConnectionTarget } from "./model.ts";
 
 export type ConnectionRouteKind =
   | "relay"
+  | "gateway"
   | "loopback"
   | "lan"
   | "tailnet"
@@ -89,6 +95,10 @@ function directAddressKind(hostname: string, tailscale = false) {
 }
 
 export function connectionRouteKind(route: ConnectionRoute): ConnectionRouteKind {
+  const profile = Option.getOrNull(route.profile);
+  if (profile?._tag === "BearerConnectionProfile" && profile.gatewayEnvironmentId !== undefined) {
+    return "gateway";
+  }
   switch (route.target._tag) {
     case "RelayConnectionTarget":
       return "relay";
@@ -98,7 +108,6 @@ export function connectionRouteKind(route: ConnectionRoute): ConnectionRouteKind
     case "BearerConnectionTarget": {
       const hostname = routeHostname(route);
       if (hostname === null) return "public";
-      const profile = Option.getOrNull(route.profile);
       return directAddressKind(
         hostname,
         profile?._tag === "BearerConnectionProfile" && profile.network === "tailscale",
@@ -135,7 +144,8 @@ const ROUTE_KIND_RANK: Record<ConnectionRouteKind, number> = {
   vpn: 2,
   public: 3,
   ssh: 4,
-  relay: 5,
+  gateway: 5,
+  relay: 6,
 };
 
 export function insertRoute(
@@ -190,6 +200,8 @@ export function connectionRouteLabel(route: ConnectionRoute): string {
   switch (connectionRouteKind(route)) {
     case "relay":
       return "T3 Connect";
+    case "gateway":
+      return "LAN gateway";
     case "loopback":
       return "This device";
     case "lan":
@@ -277,6 +289,8 @@ export function mergeLearnedRoutes(input: {
     }),
   );
   const kept = saved.flatMap((route): ReadonlyArray<ConnectionRoute> => {
+    // Gateway reverse-proxy routes are learned separately; directEndpoints never list them.
+    if (routeGatewayEnvironmentId(route) !== undefined) return [route];
     const url = routeHttpBaseUrl(route);
     if (!isLearned(route)) {
       return [
@@ -402,6 +416,9 @@ function withNetwork(route: ConnectionRoute, tailscale: boolean): ConnectionRout
         wsBaseUrl: profile.wsBaseUrl,
         ...(profile.learned === undefined ? {} : { learned: profile.learned }),
         ...(profile.authorization === undefined ? {} : { authorization: profile.authorization }),
+        ...(profile.gatewayEnvironmentId === undefined
+          ? {}
+          : { gatewayEnvironmentId: profile.gatewayEnvironmentId }),
         ...(tailscale ? { network: "tailscale" as const } : {}),
       }),
     ),
@@ -418,16 +435,278 @@ function learnedConnectionId(
     : `learned:${environmentId}:${origin}@${sharedCredential}`;
 }
 
+function gatewayConnectionId(
+  gatewayEnvironmentId: EnvironmentId,
+  peerEnvironmentId: EnvironmentId,
+  sharedCredential: string | undefined,
+): string {
+  const base = `gateway:${gatewayEnvironmentId}:${peerEnvironmentId}`;
+  return sharedCredential === undefined ? base : `${base}@${sharedCredential}`;
+}
+
 export function credentialConnectionId(connectionId: string): string {
   const at = connectionId.indexOf("@");
-  return connectionId.startsWith("learned:") && at !== -1
+  return (connectionId.startsWith("learned:") || connectionId.startsWith("gateway:")) && at !== -1
     ? connectionId.slice(at + 1)
     : connectionId;
+}
+
+export function routeGatewayEnvironmentId(route: ConnectionRoute): EnvironmentId | undefined {
+  const profile = Option.getOrNull(route.profile);
+  return profile?._tag === "BearerConnectionProfile" ? profile.gatewayEnvironmentId : undefined;
+}
+
+function gatewayWsBaseUrl(httpBaseUrl: string): string {
+  const url = new URL(httpBaseUrl);
+  return `${url.protocol === "https:" ? "wss:" : "ws:"}//${url.host}${url.pathname}`;
+}
+
+/**
+ * Upserts reverse-proxy routes through a Connect/LAN gateway host for peers it
+ * advertises that match this catalog entry. Routes drop when the host stops
+ * advertising the peer. They borrow the peer's paired bearer when possible.
+ * A peer paired through this gateway already has that path as its primary route.
+ */
+export function mergeGatewayRoutes(input: {
+  readonly entry: ConnectionCatalogEntry;
+  readonly gatewayEnvironmentId: EnvironmentId;
+  readonly gatewayHttpBaseUrl: string;
+  readonly advertised: ReadonlyArray<LanGatewayPeerAdvertisement>;
+}): ReadonlyArray<ConnectionRoute> | null {
+  const { entry, gatewayEnvironmentId } = input;
+  if (!URL.canParse(input.gatewayHttpBaseUrl)) return null;
+  const gatewayHttpBase = input.gatewayHttpBaseUrl;
+  const peerEnvironmentId = entry.target.environmentId;
+  // Mixed-content pages cannot fetch an http gateway; drop those routes the same as a missing ad.
+  const allowInsecure =
+    typeof globalThis.location === "undefined" || globalThis.location.protocol !== "https:";
+  const gatewayReachable = allowInsecure || !gatewayHttpBase.startsWith("http:");
+  const advertised =
+    gatewayReachable && input.advertised.some((peer) => peer.environmentId === peerEnvironmentId);
+  const saved = connectionRoutes(entry);
+
+  const routeSignature = (routes: ReadonlyArray<ConnectionRoute>) =>
+    routes
+      .map(
+        (route) =>
+          `${connectionRouteId(route.target)} ${routeHttpBaseUrl(route) ?? ""} ${connectionRouteKind(route)}`,
+      )
+      .join("\n");
+
+  // Pairing through the gateway stores the hop on the primary route; do not add a learned duplicate.
+  if (
+    saved.some(
+      (route) => routeGatewayEnvironmentId(route) === gatewayEnvironmentId && !isLearned(route),
+    )
+  ) {
+    const withoutLearned = saved.filter(
+      (route) => !(isLearned(route) && routeGatewayEnvironmentId(route) === gatewayEnvironmentId),
+    );
+    return routeSignature(saved) === routeSignature(withoutLearned) ? null : withoutLearned;
+  }
+
+  const sharedCredential = (() => {
+    for (const route of saved) {
+      if (isLearned(route) || route.target._tag !== "BearerConnectionTarget") continue;
+      const profile = Option.getOrNull(route.profile);
+      if (profile?._tag === "BearerConnectionProfile" && profile.authorization === "t3-connect") {
+        continue;
+      }
+      return credentialConnectionId(connectionRouteId(route.target));
+    }
+    return undefined;
+  })();
+
+  // Without a borrowed bearer the gateway route cannot authenticate (pair on LAN or through the gateway).
+  if (sharedCredential === undefined) {
+    const withoutGateway = saved.filter(
+      (route) => routeGatewayEnvironmentId(route) !== gatewayEnvironmentId,
+    );
+    return routeSignature(saved) === routeSignature(withoutGateway) ? null : withoutGateway;
+  }
+
+  // The id names the credential, so pairing or forgetting one retires the route built on the old id.
+  const connectionId = gatewayConnectionId(
+    gatewayEnvironmentId,
+    peerEnvironmentId,
+    sharedCredential,
+  );
+  const kept = saved.filter(
+    (route) =>
+      routeGatewayEnvironmentId(route) !== gatewayEnvironmentId ||
+      (advertised && connectionRouteId(route.target) === connectionId),
+  );
+
+  let next: ReadonlyArray<ConnectionRoute> = kept;
+  if (advertised) {
+    const httpBaseUrl = gatewayPeerHttpBaseUrl(gatewayHttpBase, peerEnvironmentId);
+    const existing = kept.find((route) => connectionRouteId(route.target) === connectionId);
+    const route: ConnectionRoute = {
+      target: new BearerConnectionTarget({
+        environmentId: peerEnvironmentId,
+        label: entry.target.label,
+        connectionId,
+      }),
+      profile: Option.some(
+        new BearerConnectionProfile({
+          connectionId,
+          environmentId: peerEnvironmentId,
+          label: entry.target.label,
+          httpBaseUrl,
+          wsBaseUrl: gatewayWsBaseUrl(httpBaseUrl),
+          learned: true,
+          gatewayEnvironmentId,
+        }),
+      ),
+    };
+    next =
+      existing === undefined
+        ? insertRoute(kept, route)
+        : kept.map((candidate) =>
+            connectionRouteId(candidate.target) === connectionId ? route : candidate,
+          );
+  }
+
+  return routeSignature(saved) === routeSignature(next) ? null : next;
 }
 
 export function isLearned(route: ConnectionRoute): boolean {
   const profile = Option.getOrNull(route.profile);
   return profile?._tag === "BearerConnectionProfile" && profile.learned === true;
+}
+
+const GATEWAY_PEER_UPSTREAM_KIND_ORDER = ["lan", "tailnet", "loopback"] as const;
+
+/**
+ * Private address a LAN gateway host can probe and proxy. Prefers LAN, then
+ * Tailscale, then loopback. Gateway/relay/public/ssh/vpn routes are never used.
+ */
+export function gatewayPeerUpstreamUrl(entry: ConnectionCatalogEntry): string | null {
+  const byKind = new Map<ConnectionRouteKind, string>();
+  for (const route of connectionRoutes(entry)) {
+    const kind = connectionRouteKind(route);
+    if (kind !== "lan" && kind !== "tailnet" && kind !== "loopback") continue;
+    if (byKind.has(kind)) continue;
+    const httpBaseUrl = routeHttpBaseUrl(route);
+    if (httpBaseUrl === null) continue;
+    try {
+      byKind.set(kind, new URL(httpBaseUrl).origin);
+    } catch {
+      continue;
+    }
+  }
+  for (const kind of GATEWAY_PEER_UPSTREAM_KIND_ORDER) {
+    const url = byKind.get(kind);
+    if (url !== undefined) return url;
+  }
+  return null;
+}
+
+/** Enabled catalog peers (other than the gateway) that have a private upstream URL. */
+export function desiredGatewayPeers(
+  catalog: Iterable<ConnectionCatalogEntry>,
+  gatewayEnvironmentId: EnvironmentId,
+): ReadonlyArray<{ readonly environmentId: EnvironmentId; readonly url: string }> {
+  const peers: Array<{ readonly environmentId: EnvironmentId; readonly url: string }> = [];
+  for (const entry of catalog) {
+    if (!entry.enabled || entry.unsupportedReason !== undefined) continue;
+    const environmentId = entry.target.environmentId;
+    if (environmentId === gatewayEnvironmentId) continue;
+    const url = gatewayPeerUpstreamUrl(entry);
+    if (url === null) continue;
+    peers.push({ environmentId, url });
+  }
+  return peers;
+}
+
+/** Enabled peers the catalog reaches through this gateway (paired or learned). */
+export function retainedGatewayPeerIds(
+  catalog: Iterable<ConnectionCatalogEntry>,
+  gatewayEnvironmentId: EnvironmentId,
+): ReadonlySet<EnvironmentId> {
+  const ids = new Set<EnvironmentId>();
+  for (const entry of catalog) {
+    if (!entry.enabled) continue;
+    const environmentId = entry.target.environmentId;
+    if (environmentId === gatewayEnvironmentId) continue;
+    if (
+      connectionRoutes(entry).some(
+        (route) => routeGatewayEnvironmentId(route) === gatewayEnvironmentId,
+      )
+    ) {
+      ids.add(environmentId);
+    }
+  }
+  return ids;
+}
+
+export function planGatewayPeerReconcile(input: {
+  readonly desired: ReadonlyArray<{ readonly environmentId: EnvironmentId; readonly url: string }>;
+  readonly listed: ReadonlyArray<{
+    readonly environmentId: EnvironmentId;
+    readonly httpBaseUrl: string;
+  }>;
+  /** Peers the catalog reaches through this gateway; never unregister them. */
+  readonly retain?: ReadonlySet<EnvironmentId>;
+  /**
+   * Peers this client last registered from its own catalog. Without this, a second client
+   * with an empty catalog would unregister peers still needed by others.
+   */
+  readonly previousDesired?: ReadonlySet<EnvironmentId>;
+}): {
+  readonly add: ReadonlyArray<{ readonly environmentId: EnvironmentId; readonly url: string }>;
+  readonly remove: ReadonlyArray<EnvironmentId>;
+} {
+  const desiredById = new Map(input.desired.map((peer) => [peer.environmentId, peer.url]));
+  const add: Array<{ readonly environmentId: EnvironmentId; readonly url: string }> = [];
+  for (const [environmentId, url] of desiredById) {
+    const listed = input.listed.find((peer) => peer.environmentId === environmentId);
+    let listedOrigin: string | undefined;
+    try {
+      listedOrigin = listed === undefined ? undefined : new URL(listed.httpBaseUrl).origin;
+    } catch {
+      listedOrigin = undefined;
+    }
+    if (listedOrigin !== url) add.push({ environmentId, url });
+  }
+  const remove = input.listed
+    .filter((peer) => {
+      if (desiredById.has(peer.environmentId)) return false;
+      if (input.retain?.has(peer.environmentId) === true) return false;
+      // Unknown ownership: only remove peers this client previously desired.
+      // In-memory ownership resets on restart, so prior-session registrations are left alone.
+      if (input.previousDesired !== undefined && !input.previousDesired.has(peer.environmentId)) {
+        return false;
+      }
+      return true;
+    })
+    .map((peer) => peer.environmentId);
+  return { add, remove };
+}
+
+/**
+ * Peers this client may later auto-remove. Keep prior ownership while still desired;
+ * claim new peers only when already listed or when add succeeded (never after a failed add).
+ */
+export function claimedGatewayPeerIds(input: {
+  readonly desired: ReadonlyArray<{ readonly environmentId: EnvironmentId }>;
+  readonly previousDesired: ReadonlySet<EnvironmentId>;
+  readonly addAttempts: ReadonlyArray<EnvironmentId>;
+  readonly addSucceeded: ReadonlySet<EnvironmentId>;
+}): ReadonlySet<EnvironmentId> {
+  const attempted = new Set(input.addAttempts);
+  const claimed = new Set<EnvironmentId>();
+  for (const peer of input.desired) {
+    const id = peer.environmentId;
+    if (input.previousDesired.has(id)) {
+      claimed.add(id);
+      continue;
+    }
+    if (!attempted.has(id) || input.addSucceeded.has(id)) {
+      claimed.add(id);
+    }
+  }
+  return claimed;
 }
 
 /**

@@ -1,6 +1,10 @@
 import { EnvironmentId, type ExecutionEnvironmentDescriptor } from "@t3tools/contracts";
 import { RelayEnvironmentEndpointFailure } from "@t3tools/contracts/relay";
+import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
+
+import { environmentEndpointUrl, withGatewayTicket } from "../environment/endpoint.ts";
 
 const ConnectionTargetBase = {
   environmentId: EnvironmentId,
@@ -160,7 +164,52 @@ export interface PreparedConnection {
   readonly target: ConnectionTarget;
   /** What the server said about itself while this connection was prepared. */
   readonly descriptor?: ExecutionEnvironmentDescriptor;
+  /** On a LAN gateway route, mints the short-lived ticket a request needs to pass the gateway. */
+  readonly gatewayTicket?: Effect.Effect<Option.Option<string>, ConnectionAttemptError>;
 }
+
+/** The base URL for one request: a gateway route's ticket expires, so `httpBaseUrl` holds none. */
+export const ticketedHttpBaseUrl = (
+  prepared: Pick<PreparedConnection, "httpBaseUrl" | "gatewayTicket">,
+): Effect.Effect<string, ConnectionAttemptError> =>
+  prepared.gatewayTicket === undefined
+    ? Effect.succeed(prepared.httpBaseUrl)
+    : prepared.gatewayTicket.pipe(
+        Effect.map((ticket) => withGatewayTicket(prepared.httpBaseUrl, ticket)),
+      );
+
+/**
+ * Path on a prepared base that keeps a LAN gateway prefix and re-applies the hop ticket.
+ * `environmentEndpointUrl` clears search, so callers that only join a path would drop the ticket.
+ */
+export const ticketedEnvironmentEndpointUrl = (
+  prepared: PreparedConnection,
+  pathname: string,
+): Effect.Effect<string, ConnectionAttemptError> =>
+  ticketedHttpBaseUrl(prepared).pipe(
+    Effect.map((ticketedBase) => {
+      const hop = Option.fromNullishOr(new URL(ticketedBase).searchParams.get("gatewayTicket"));
+      return withGatewayTicket(environmentEndpointUrl(ticketedBase, pathname), hop);
+    }),
+  );
+
+/**
+ * `<img>` and uploads cannot set headers, so a server-issued URL carries a gateway route's ticket.
+ * Returns the same object on any other route.
+ */
+export const ticketedRelativeUrl = <A extends { readonly relativeUrl: string }>(
+  prepared: Option.Option<PreparedConnection>,
+  value: A,
+): Effect.Effect<A, ConnectionAttemptError> =>
+  Option.isNone(prepared) || prepared.value.gatewayTicket === undefined
+    ? Effect.succeed(value)
+    : prepared.value.gatewayTicket.pipe(
+        Effect.map((ticket) =>
+          Option.isNone(ticket)
+            ? value
+            : { ...value, relativeUrl: withGatewayTicket(value.relativeUrl, ticket) },
+        ),
+      );
 
 export type SupervisorConnectionPhase =
   | "available"

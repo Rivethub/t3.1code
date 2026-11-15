@@ -22,6 +22,7 @@ import * as RemoteEnvironmentAuthorization from "./service.ts";
 import * as TokenStore from "./tokenStore.ts";
 import { BearerConnectionCredential, BearerConnectionProfile } from "../connection/catalog.ts";
 import * as ConnectionCredentialStore from "../connection/credentialStore.ts";
+import * as GatewayHop from "../connection/gatewayHop.ts";
 import { BearerConnectionTarget } from "../connection/model.ts";
 import * as ConnectionProfileStore from "../connection/profileStore.ts";
 import * as ConnectionResolver from "../connection/resolver.ts";
@@ -273,6 +274,7 @@ const prepareDirectBearer = Effect.fn("TestRemoteAuthorization.prepareDirectBear
     Layer.provide(
       Layer.mergeAll(
         harness.layer,
+        Layer.mock(GatewayHop.GatewayHopAuthorization)({}),
         Layer.succeed(ConnectionProfileStore.ConnectionProfileStore, {
           get: unused,
           put: unused,

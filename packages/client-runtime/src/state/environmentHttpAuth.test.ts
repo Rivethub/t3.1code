@@ -26,6 +26,7 @@ import { AsyncResult } from "effect/reactivity";
 
 import * as RemoteEnvironmentAuthorization from "../authorization/service.ts";
 import {
+  BearerConnectionTarget,
   ConnectionTransientError,
   RelayConnectionTarget,
   type PreparedConnection,
@@ -36,6 +37,7 @@ import { type RemoteEnvironmentRequestError } from "../rpc/http.ts";
 import * as RpcHttp from "../rpc/http.ts";
 import * as PullRequestDiffLoader from "./pullRequestDiffHttp.ts";
 import { fetchEnvironmentSessionState, sessionDeniesScope } from "./session.ts";
+import { resolveDeviceHubAccess, withDeviceHubQuery } from "./deviceHubAccess.ts";
 import { fetchEnvironmentShellSnapshot } from "./shellSnapshotHttp.ts";
 import * as ThreadSnapshotLoader from "./threadSnapshotHttp.ts";
 import { fetchEnvironmentThreadTranscript } from "./threadTranscriptHttp.ts";
@@ -501,6 +503,111 @@ describe("authenticated environment HTTP requests", () => {
       expect(error._tag).toBe(errorTag);
       expect(harness.calls).toHaveLength(1);
       expect(harness.authorizations).toEqual([{ expectedEnvironmentId: TARGET.environmentId }]);
+    }),
+  );
+
+  it.effect("sends each LAN gateway request with a freshly minted hop ticket", () =>
+    Effect.gen(function* () {
+      const harness = makeHarness((count) =>
+        Response.json(
+          count <= 2 ? SESSION : { ticket: "peer-media", expiresAt: "2030-01-01T00:00:00Z" },
+        ),
+      );
+      let minted = 0;
+      const input = {
+        ...harness.input,
+        prepared: {
+          ...PREPARED,
+          httpBaseUrl: "https://gateway.example.test/__t3_gateway/environment-1/",
+          httpAuthorization: { _tag: "Bearer", token: "peer-token" },
+          target: new BearerConnectionTarget({
+            environmentId: TARGET.environmentId,
+            label: TARGET.label,
+            connectionId: "gateway:route",
+          }),
+          gatewayTicket: Effect.sync(() => Option.some(`hop-${++minted}`)),
+        } satisfies PreparedConnection,
+      };
+      yield* fetchEnvironmentSessionState(input).pipe(Effect.provide(harness.httpLayer));
+      yield* fetchEnvironmentSessionState(input).pipe(Effect.provide(harness.httpLayer));
+
+      expect(harness.calls.map((call) => call.url)).toEqual([
+        "https://gateway.example.test/__t3_gateway/environment-1/api/auth/session?gatewayTicket=hop-1",
+        "https://gateway.example.test/__t3_gateway/environment-1/api/auth/session?gatewayTicket=hop-2",
+      ]);
+      for (const httpAuthorization of [input.prepared.httpAuthorization, null]) {
+        const access = yield* resolveDeviceHubAccess({
+          prepared: { ...input.prepared, httpAuthorization },
+          hubBasePath: "/api/browser",
+        }).pipe(Effect.provide(harness.httpLayer));
+        expect(access.httpBase).toBe(
+          "https://gateway.example.test/__t3_gateway/environment-1/api/browser",
+        );
+        const stream = new URL(withDeviceHubQuery(`${access.wsBase}/ws?tabId=tab`, access));
+        expect(stream.protocol).toBe("wss:");
+        expect(stream.pathname).toBe("/__t3_gateway/environment-1/api/browser/ws");
+        expect(stream.searchParams.get("tabId")).toBe("tab");
+        expect(stream.searchParams.get("gatewayTicket")).toBe(
+          httpAuthorization === null ? "hop-5" : "hop-3",
+        );
+        expect(stream.searchParams.get("wsTicket")).toBe(
+          httpAuthorization === null ? null : "peer-media",
+        );
+        expect(access.credentials).toBe(httpAuthorization === null);
+      }
+    }),
+  );
+
+  it.effect("signs the DPoP proof for the gateway URL that includes the hop ticket", () =>
+    Effect.gen(function* () {
+      const harness = makeHarness(() => Response.json(SESSION));
+      const input = {
+        ...harness.input,
+        prepared: {
+          ...PREPARED,
+          httpBaseUrl: "https://gateway.example.test/__t3_gateway/environment-1/",
+          target: new BearerConnectionTarget({
+            environmentId: TARGET.environmentId,
+            label: TARGET.label,
+            connectionId: "gateway:route",
+          }),
+          gatewayTicket: Effect.succeedSome("hop-dpop"),
+        } satisfies PreparedConnection,
+      };
+      yield* fetchEnvironmentSessionState(input).pipe(Effect.provide(harness.httpLayer));
+
+      const sent =
+        "https://gateway.example.test/__t3_gateway/environment-1/api/auth/session?gatewayTicket=hop-dpop";
+      expect(harness.calls.map((call) => call.url)).toEqual([sent]);
+      expect(harness.proofs).toEqual([{ method: "GET", url: sent, accessToken: "current-token" }]);
+    }),
+  );
+
+  it.effect("keeps hop tickets out of gateway request error URLs", () =>
+    Effect.gen(function* () {
+      const harness = makeHarness(() => Response.json({ error: "bad_gateway" }, { status: 502 }));
+      const error = yield* fetchEnvironmentSessionState({
+        ...harness.input,
+        prepared: {
+          ...PREPARED,
+          httpBaseUrl: "https://gateway.example.test/__t3_gateway/environment-1/",
+          target: new BearerConnectionTarget({
+            environmentId: TARGET.environmentId,
+            label: TARGET.label,
+            connectionId: "gateway:route",
+          }),
+          gatewayTicket: Effect.succeedSome("hop-secret"),
+        } satisfies PreparedConnection,
+      }).pipe(Effect.provide(harness.httpLayer), Effect.flip);
+
+      expect(error).toMatchObject({
+        _tag: "RemoteEnvironmentAuthUndeclaredStatusError",
+        status: 502,
+        requestUrl: "https://gateway.example.test/__t3_gateway/environment-1/api/auth/session",
+      });
+      expect(error.message).not.toContain("gatewayTicket");
+      expect(error.message).not.toContain("hop-secret");
+      expect(harness.calls[0]?.url).toContain("gatewayTicket=hop-secret");
     }),
   );
 

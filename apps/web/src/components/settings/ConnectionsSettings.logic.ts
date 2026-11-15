@@ -1,6 +1,7 @@
 import * as DateTime from "effect/DateTime";
 
 import { resolveDesktopPairingUrl, resolveHostedPairingUrl } from "./pairingUrls";
+import { gatewayPathPrefix } from "@t3tools/shared/advertisedEndpoint";
 import { getPairingTokenFromUrl, setPairingTokenOnUrl } from "@t3tools/shared/remote";
 import { readHostedPairingRequest } from "../../hostedPairing";
 import {
@@ -233,6 +234,48 @@ export function parseManualDesktopSshTarget(input: {
   };
 }
 
+const pairingUrlLike = (host: string): string => {
+  const trimmed = host.trim();
+  return /^[a-zA-Z][a-zA-Z\d+.-]*:\/\//u.test(trimmed) || trimmed.startsWith("//")
+    ? trimmed
+    : `https://${trimmed}`;
+};
+
+/** True when the host still names a `/__t3_gateway/:peer` path (prefill may outlive edits). */
+export function hostUsesGatewayPath(host: string): boolean {
+  if (!host.trim()) return false;
+  try {
+    return gatewayPathPrefix(new URL(pairingUrlLike(host))) !== "";
+  } catch {
+    return false;
+  }
+}
+
+const pairingHostOrigin = (host: string): string | null => {
+  if (!host.trim()) return null;
+  try {
+    return new URL(pairingUrlLike(host)).origin;
+  } catch {
+    return null;
+  }
+};
+
+/**
+ * Prefill gatewayEnvironmentId is bound to the prefill origin. A gateway path on a
+ * different host must not reuse that hop ticket.
+ */
+export function shouldUseGatewayPairPrefill(input: {
+  readonly submittedHost: string;
+  readonly prefillHost: string;
+}): boolean {
+  if (!hostUsesGatewayPath(input.submittedHost) || !hostUsesGatewayPath(input.prefillHost)) {
+    return false;
+  }
+  const submittedOrigin = pairingHostOrigin(input.submittedHost);
+  const prefillOrigin = pairingHostOrigin(input.prefillHost);
+  return submittedOrigin !== null && submittedOrigin === prefillOrigin;
+}
+
 export function parsePairingUrlFields(
   input: string,
 ): { readonly host: string; readonly pairingCode: string } | null {
@@ -240,11 +283,16 @@ export function parsePairingUrlFields(
   if (!trimmed) return null;
 
   try {
-    const urlLikeInput =
-      /^[a-zA-Z][a-zA-Z\d+.-]*:\/\//u.test(trimmed) || trimmed.startsWith("//")
-        ? trimmed
-        : `https://${trimmed}`;
-    const url = new URL(urlLikeInput, window.location.origin);
+    const like = pairingUrlLike(trimmed);
+    // Protocol-relative hosts need a base; absolute URLs must not depend on window (unit tests).
+    const url = like.startsWith("//")
+      ? new URL(
+          like,
+          typeof globalThis.location?.href === "string"
+            ? globalThis.location.href
+            : "https://local.invalid/",
+        )
+      : new URL(like);
     const hostedPairingRequest = readHostedPairingRequest(url);
     if (hostedPairingRequest) {
       return {
@@ -255,8 +303,9 @@ export function parsePairingUrlFields(
 
     const pairingCode = getPairingTokenFromUrl(url);
     if (!pairingCode) return null;
+    const gatewayPrefix = gatewayPathPrefix(url);
     return {
-      host: url.origin,
+      host: gatewayPrefix.length === 0 ? url.origin : `${url.origin}${gatewayPrefix}/`,
       pairingCode,
     };
   } catch {
