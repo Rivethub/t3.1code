@@ -96,6 +96,15 @@ it.layer(layerTest)("CursorDriver", (it) => {
         const requests: Array<{ url: string; authorization: string | undefined }> = [];
         const client = HttpClient.make((request) => {
           requests.push({ url: request.url, authorization: request.headers.authorization });
+          if (request.url.includes("GetCurrentPeriodUsage")) {
+            expect(request.headers.authorization).toBe("Bearer instance-browser-key");
+            return Effect.succeed(
+              HttpClientResponse.fromWeb(
+                request,
+                Response.json({ planUsage: { totalPercentUsed: 42 } }),
+              ),
+            );
+          }
           return Effect.succeed(
             HttpClientResponse.fromWeb(
               request,
