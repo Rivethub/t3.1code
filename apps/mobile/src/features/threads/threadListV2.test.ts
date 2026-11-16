@@ -278,7 +278,7 @@ describe("threadListV2RowAccessibilityLabel", () => {
         statusLabel: "Failed",
         snoozeWakeLabel: "in 2h",
       }),
-    ).toBe("Fix login, in 2h, Codex");
+    ).toBe("Fix login, Failed, in 2h, Codex");
   });
 });
 
