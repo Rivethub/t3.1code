@@ -103,3 +103,14 @@ it("keeps the Escape that cancels a rename from also reaching window shortcuts",
   expect(persisted.title).toBe("New thread");
   expect(windowEscapes).toEqual([true]);
 });
+
+it("stops renaming without saving when the title input blurs", async () => {
+  persisted.title = "Original title";
+  await using screen = await render(header(persisted.title));
+  await screen.getByRole("button", { name: "Thread actions for Original title" }).dblClick();
+  const input = screen.getByRole("textbox", { name: "Thread title" });
+  await input.fill("Edited title");
+  await screen.getByText("Outside rename").click();
+  await expect.element(input).not.toBeInTheDocument();
+  expect(persisted.title).toBe("Original title");
+});
