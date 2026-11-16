@@ -136,7 +136,7 @@ function setup(failedBaseRef: string | null) {
       byThreadKey: {},
       branchBaseRefByThreadKey: {},
     });
-    useDiffPanelSessionStore.setState({ collapsedFileKeysByScopeKey: {} });
+    useDiffPanelSessionStore.setState({ foldStateByScopeKey: {} });
     useRightPanelStore.setState({ byThreadKey: {}, threadPanelVisibilityByThreadKey: {} });
   };
   reset();
