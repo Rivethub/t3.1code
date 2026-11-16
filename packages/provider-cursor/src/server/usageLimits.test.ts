@@ -2,10 +2,41 @@ import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
-import { cursorUsageResponseToLimits, readCursorUsageLimits } from "./usageLimits.ts";
+import {
+  cursorUsageLimitsEnvironment,
+  cursorUsageResponseToLimits,
+  readCursorUsageLimits,
+} from "./usageLimits.ts";
 
 describe("Cursor usage limits", () => {
   const checkedAt = "2026-09-16T00:00:00.000Z";
+
+  it("maps browser sessions to CURSOR_AUTH_TOKEN and keeps explicit API keys as CURSOR_API_KEY", () => {
+    expect(
+      cursorUsageLimitsEnvironment(
+        { CURSOR_API_KEY: "stale-env-key", CURSOR_AUTH_TOKEN: "configured-auth" },
+        { apiKey: "session-token", usesApiKey: false },
+      ),
+    ).toEqual({
+      CURSOR_API_KEY: undefined,
+      CURSOR_AUTH_TOKEN: "configured-auth",
+    });
+    expect(
+      cursorUsageLimitsEnvironment(
+        { CURSOR_API_KEY: "stale-env-key" },
+        { apiKey: "session-token", usesApiKey: false },
+      ),
+    ).toEqual({
+      CURSOR_API_KEY: undefined,
+      CURSOR_AUTH_TOKEN: "session-token",
+    });
+    expect(
+      cursorUsageLimitsEnvironment({ HOME: "/tmp" }, { apiKey: "user-api-key", usesApiKey: true }),
+    ).toEqual({
+      HOME: "/tmp",
+      CURSOR_API_KEY: "user-api-key",
+    });
+  });
 
   it("uses the advertised percentages and billing-cycle reset", () => {
     const limits = cursorUsageResponseToLimits(
