@@ -313,7 +313,7 @@ export function threadListV2RowAccessibilityLabel(input: {
   // Mirrors the row's meta line: a card shows Woke, else its status, else the time.
   const meta =
     input.variant === "slim"
-      ? (input.snoozeWakeLabel ?? input.timeLabel)
+      ? [input.statusLabel, input.snoozeWakeLabel ?? input.timeLabel].filter(Boolean).join(", ")
       : input.woke
         ? "Woke"
         : (input.statusLabel ?? input.timeLabel);
@@ -337,6 +337,11 @@ export function resolveThreadListV2RowStatus(
   // A runtime failure without a failed run has nothing to date it, so it stays.
   if (status !== "failed" || thread.latestRun?.status !== "failed") return status;
   return hasUnseenRunFailure(thread) ? status : "ready";
+}
+
+/** Slim snoozed rows keep Limited next to the wake time; other statuses stay wake-only. */
+export function threadListV2SnoozedShowsStatus(status: ThreadListV2Status): boolean {
+  return status === "limited";
 }
 
 function parseTimestampMs(isoDate: string): number {

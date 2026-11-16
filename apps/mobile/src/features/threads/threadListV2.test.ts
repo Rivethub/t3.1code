@@ -42,6 +42,7 @@ import {
   resolveThreadListV2SnoozePresets,
   resolveThreadListV2RowStatus,
   resolveThreadListV2Status,
+  threadListV2SnoozedShowsStatus,
   resolveThreadListV2WokeAt,
   threadListV2ListItemsAreEqual,
   threadListV2RowAccessibilityLabel,
@@ -204,6 +205,27 @@ describe("resolveThreadListV2Status", () => {
     expect(resolveThreadListV2Status({ ...guest, hasPendingApprovals: true })).toBe("approval");
   });
 
+  it("keeps Limited on snoozed slim rows so usage stops stay recognizable", () => {
+    const thread = {
+      ...presentThreadShell(environmentId, decodeThreadShell(makeRawThreadShell())),
+      runtime: {
+        status: "failed" as const,
+        activeRunId: null,
+        providerInstanceId: ProviderInstanceId.make("codex"),
+        providerName: "Codex",
+        lastError: "Plan limit reached",
+        lastErrorClass: "usage_limit" as const,
+        updatedAt: NOW,
+      },
+    };
+
+    expect(resolveThreadListV2Status(thread)).toBe("limited");
+    // Slim snoozed rows still show Limited next to the wake time.
+    expect(threadListV2SnoozedShowsStatus(resolveThreadListV2Status(thread))).toBe(true);
+    expect(threadListV2SnoozedShowsStatus("failed")).toBe(false);
+    expect(threadListV2SnoozedShowsStatus("ready")).toBe(false);
+  });
+
   it.each([
     { roster: "dev server", task: { kind: "command" }, status: "ready" },
     { roster: "dev server watchdog", task: { kind: "monitor" }, status: "ready" },
@@ -256,7 +278,7 @@ describe("threadListV2RowAccessibilityLabel", () => {
         statusLabel: "Failed",
         snoozeWakeLabel: "in 2h",
       }),
-    ).toBe("Fix login, in 2h, Codex");
+    ).toBe("Fix login, Failed, in 2h, Codex");
   });
 });
 
