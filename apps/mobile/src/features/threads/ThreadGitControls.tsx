@@ -26,6 +26,8 @@ import {
   type TerminalMenuSession,
 } from "../terminal/terminalMenu";
 import { projectScriptMenuLabel } from "@t3tools/shared/projectScripts";
+import type { ThreadPr } from "../../state/thread-pr-presentation";
+import { resolveThreadGitViewablePr, resolveThreadGitViewPrItem } from "./threadGitMenu";
 
 function truncateMiddle(value: string, maxLength: number): string {
   if (value.length <= maxLength) {
@@ -83,6 +85,8 @@ export type ThreadGitMenuProps = {
   readonly currentBranch: string | null;
   readonly hasThread?: boolean;
   readonly gitStatus: VcsStatusResult | null;
+  /** Open PR linked to the thread, possibly on another ref; only adds a View PR row. */
+  readonly linkedPullRequest?: ThreadPr | null;
   readonly gitOperationLabel: string | null;
   readonly onOpenFilesInspector?: () => void;
   readonly onOpenGitInspector?: () => void;
@@ -153,11 +157,13 @@ function useThreadGitControlModel(props: ThreadGitMenuProps) {
     return "arrow.up.right.circle";
   })();
 
+  const viewablePr = resolveThreadGitViewablePr(gitStatus, props.linkedPullRequest ?? null);
+
   const openExistingPr = async () => {
     const { shortLabel, singular } = sourceControlClients.get(
       gitStatus?.sourceControlProvider?.kind,
     ).changeRequest;
-    const prUrl = gitStatus?.pr?.state === "open" ? gitStatus.pr.url : null;
+    const prUrl = viewablePr?.url ?? null;
     if (!prUrl) {
       Dialog.alert(`No open ${shortLabel}`, `This branch does not have an open ${singular}.`);
       return;
@@ -239,9 +245,11 @@ function useThreadGitControlModel(props: ThreadGitMenuProps) {
   return {
     currentBranchLabel,
     isRepo,
+    openExistingPr,
     openGitInspector,
     openReview,
     quickAction,
+    viewablePr,
     quickActionHint,
     quickActionIcon,
     runQuickAction,
@@ -304,6 +312,11 @@ export function threadTerminalMenu(props: ThreadGitControlsProps): AppBarMenu | 
 /** The thread's git menu, shared by the thread bar and Review. */
 export function useThreadGitMenuDefinition(props: ThreadGitMenuProps): AppBarMenu | null {
   const model = useThreadGitControlModel(props);
+  const viewPr = resolveThreadGitViewPrItem(
+    props.gitStatus,
+    model.viewablePr,
+    model.quickAction.kind,
+  );
   return {
     title: "Git controls",
     icon: "point.topleft.down.curvedto.point.bottomright.up",
@@ -327,6 +340,19 @@ export function useThreadGitMenuDefinition(props: ThreadGitMenuProps): AppBarMen
           void model.runQuickAction();
         },
       },
+      ...(viewPr
+        ? [
+            {
+              id: "git-view-pr",
+              title: viewPr.title,
+              icon: PullRequestGlyph.pullRequest,
+              subtitle: viewPr.subtitle,
+              onPress: () => {
+                void model.openExistingPr();
+              },
+            },
+          ]
+        : []),
       {
         id: "git-review",
         title: "Review changes",

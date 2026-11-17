@@ -77,7 +77,7 @@ function GitOverviewSheetContent(props: GitOverviewSheetProps) {
     context: selectedThread ?? undefined,
   });
   const { selectedThreadCwd, selectedThreadWorktreePath } = useSelectedThreadWorktree();
-  const linkedPrLines = useLinkedPullRequestLines(selectedThread, selectedEnvironmentRuntime);
+  const linkedPrLines = useLinkedPullRequestLines(selectedThread);
   const linkedPrActions = useLinkedPullRequestActions({
     thread: selectedThread,
     project: selectedThreadProject,
