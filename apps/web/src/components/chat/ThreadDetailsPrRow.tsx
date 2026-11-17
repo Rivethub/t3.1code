@@ -347,9 +347,7 @@ export function ThreadDetailsPrRow({
     );
 
   const newThreadSuffix =
-    composerTarget == null ? (
-      <ArrowUpRightIcon aria-hidden className="size-3 shrink-0" />
-    ) : null;
+    composerTarget == null ? <ArrowUpRightIcon aria-hidden className="size-3 shrink-0" /> : null;
   const trailingAction =
     rowAction === "resolve"
       ? {

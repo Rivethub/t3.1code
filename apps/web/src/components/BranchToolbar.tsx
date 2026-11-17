@@ -17,7 +17,11 @@ import {
 } from "react";
 import { flushSync } from "react-dom";
 
-import { useComposerDraftStore, type ComposerThreadTarget, type DraftId } from "../composerDraftStore";
+import {
+  useComposerDraftStore,
+  type ComposerThreadTarget,
+  type DraftId,
+} from "../composerDraftStore";
 import { EnvironmentMachineIcon } from "./EnvironmentMachineIcon";
 import { useProject, useThreadShellsForProjectRefs } from "../state/entities";
 import {
