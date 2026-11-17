@@ -17,7 +17,11 @@ import {
 } from "react";
 import { flushSync } from "react-dom";
 
-import { useComposerDraftStore, type DraftId } from "../composerDraftStore";
+import {
+  useComposerDraftStore,
+  type ComposerThreadTarget,
+  type DraftId,
+} from "../composerDraftStore";
 import { EnvironmentMachineIcon } from "./EnvironmentMachineIcon";
 import { useProject, useThreadShellsForProjectRefs } from "../state/entities";
 import {
@@ -86,6 +90,7 @@ interface BranchToolbarProps {
   isServerThread: boolean;
   showGitControls: boolean;
   draftId?: DraftId;
+  composerDraftTarget?: ComposerThreadTarget | null | undefined;
   onEnvModeChange: (mode: EnvMode) => void;
   envMode: EnvMode;
   activeThreadBranchOverride?: string | null;
@@ -596,6 +601,7 @@ export const BranchToolbar = memo(function BranchToolbar({
   isServerThread,
   showGitControls,
   draftId,
+  composerDraftTarget,
   onEnvModeChange,
   envMode,
   activeThreadBranchOverride,
@@ -714,6 +720,7 @@ export const BranchToolbar = memo(function BranchToolbar({
             environmentId={environmentId}
             threadId={threadId}
             {...(draftId ? { draftId } : {})}
+            composerDraftTarget={composerDraftTarget}
             envLocked={envLocked}
             effectiveEnvModeOverride={effectiveEnvMode}
             {...(activeThreadBranchOverride !== undefined ? { activeThreadBranchOverride } : {})}

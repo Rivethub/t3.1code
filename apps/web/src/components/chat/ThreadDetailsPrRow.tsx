@@ -35,7 +35,7 @@ import {
 
 import {
   buildFixFindingsHandoff,
-  buildResolveConflictsPrompt,
+  buildResolveConflictsHandoff,
   classifyPullRequestChecks,
   describePullRequestChecks,
   isPullRequestConflicting,
@@ -111,8 +111,8 @@ export function ThreadDetailsPrRow({
   onOpen: (event: ReactMouseEvent<HTMLElement>) => void;
   onActed?: () => void;
   onStopWatching?: (() => void) | undefined;
-  /** Fix and Resolve write here instead of checking the pull request out in a new thread. */
-  composerTarget?: ComposerThreadTarget | undefined;
+  /** Fix and Resolve write here instead of checking the pull request out in a new thread. Null blocks while a queued edit is open. */
+  composerTarget?: ComposerThreadTarget | null | undefined;
 }) {
   const serverConfigs = useServerConfigs();
   const supportsPullRequests = serverConfigs.get(environmentId) !== undefined;
@@ -202,6 +202,7 @@ export function ThreadDetailsPrRow({
       void startHandoff(kind, task);
       return;
     }
+    if (composerTarget === null) return;
     writeHandoffToComposer(composerTarget, task);
     toastManager.add({
       type: "success",
@@ -212,15 +213,19 @@ export function ThreadDetailsPrRow({
 
   const startResolveConflicts = () => {
     if (detail === null) return;
-    handOff("conflicts", {
-      prompt: buildResolveConflictsPrompt({
+    handOff(
+      "conflicts",
+      buildResolveConflictsHandoff({
         number: detail.number,
+        title: detail.title,
         url: detail.url,
         headBranch: detail.headBranch,
         baseBranch: detail.baseBranch,
-        inThisThread: composerTarget !== undefined,
+        state: detail.state,
+        isDraft: detail.isDraft,
+        inThisThread: composerTarget != null,
       }),
-    });
+    );
   };
 
   const startFixChecks = () => {
@@ -239,7 +244,7 @@ export function ThreadDetailsPrRow({
         comments: [],
         checks: detail.checks,
         commentsTruncated: false,
-        inThisThread: composerTarget !== undefined,
+        inThisThread: composerTarget != null,
       }),
     );
   };
@@ -342,9 +347,7 @@ export function ThreadDetailsPrRow({
     );
 
   const newThreadSuffix =
-    composerTarget === undefined ? (
-      <ArrowUpRightIcon aria-hidden className="size-3 shrink-0" />
-    ) : null;
+    composerTarget == null ? <ArrowUpRightIcon aria-hidden className="size-3 shrink-0" /> : null;
   const trailingAction =
     rowAction === "resolve"
       ? {
@@ -354,7 +357,7 @@ export function ThreadDetailsPrRow({
           destructive: true,
           suffix: newThreadSuffix,
           tooltip:
-            composerTarget === undefined
+            composerTarget == null
               ? "Check the branch out and resolve the conflicts in a new thread"
               : "Resolve the conflicts in this thread",
           onClick: startResolveConflicts,
@@ -382,7 +385,7 @@ export function ThreadDetailsPrRow({
                   newThreadSuffix
                 ),
               tooltip:
-                composerTarget === undefined
+                composerTarget == null
                   ? "Fix the failing checks in a new thread"
                   : "Fix the failing checks in this thread",
               onClick: startFixChecks,
@@ -398,6 +401,9 @@ export function ThreadDetailsPrRow({
                 onClick: () => setConfirmingMerge(true),
               }
             : null;
+
+  const handoffBlocked =
+    composerTarget === null && (rowAction === "fix" || rowAction === "resolve");
 
   const watching =
     onStopWatching !== undefined && (detail?.state ?? pr?.state ?? "open") === "open";
@@ -498,6 +504,8 @@ export function ThreadDetailsPrRow({
                       part="meta"
                       tone={trailingAction.destructive ? "destructive" : "primary"}
                       disabled={actionPending || handoff !== null}
+                      // Disabled buttons take no pointer or focus, which would hide the reason.
+                      aria-disabled={handoffBlocked || undefined}
                       onClick={trailingAction.onClick}
                     />
                   }
@@ -505,7 +513,11 @@ export function ThreadDetailsPrRow({
                   {trailingAction.pending ? trailingAction.pendingLabel : trailingAction.label}
                   {trailingAction.suffix}
                 </TooltipTrigger>
-                <TooltipPopup side="top">{trailingAction.tooltip}</TooltipPopup>
+                <TooltipPopup side="top">
+                  {handoffBlocked
+                    ? "Finish editing the queued message first"
+                    : trailingAction.tooltip}
+                </TooltipPopup>
               </Tooltip>
             ) : null}
           </div>

@@ -13,6 +13,7 @@ import { expect, it, vi } from "vite-plus/test";
 const state = vi.hoisted(() => ({
   status: "success" as PullRequestCheck["status"],
   extraStatus: null as PullRequestCheck["status"] | null,
+  mergeability: "mergeable" as "mergeable" | "conflicting",
   mergeMethods: ["merge"] as Array<"merge" | "squash" | "rebase">,
   perform: vi.fn(),
   newThread: vi.fn(),
@@ -47,7 +48,7 @@ const queryData = () => ({
   title: "Test PR",
   state: "open",
   isDraft: false,
-  mergeability: "mergeable",
+  mergeability: state.mergeability,
   headBranch: "feature",
   baseBranch: "main",
   changedFiles: 1,
@@ -232,6 +233,32 @@ it("requires a new merge click after passing checks become pending and pass agai
   expect(state.perform).not.toHaveBeenCalled();
 });
 
+it("blocks Fix while a queued message is being edited", async () => {
+  await using screen = await setup();
+  state.status = "failure";
+  await act(async () => {
+    await screen.rerender(
+      <ThreadDetailsPrRow
+        environmentId={EnvironmentId.make("environment")}
+        pr={null}
+        number={1}
+        status={null}
+        project={null}
+        label="Test PR"
+        openAriaLabel="Open PR"
+        onOpen={vi.fn()}
+        composerTarget={null}
+      />,
+    );
+  });
+  const blockedFix = [...screen.container.querySelectorAll("button")].find(
+    (button) => button.textContent?.trim() === "Fix",
+  )!;
+  expect(blockedFix.getAttribute("aria-disabled")).toBe("true");
+  await act(async () => blockedFix.click());
+  expect(state.newThread).not.toHaveBeenCalled();
+});
+
 async function setup() {
   state.perform.mockReset();
   state.checkoutError = null;
@@ -245,6 +272,7 @@ async function setup() {
 
   state.status = "success";
   state.extraStatus = null;
+  state.mergeability = "mergeable";
   state.mergeMethods = ["merge"];
   state.projects = [];
   state.pullRequests = [];
@@ -275,9 +303,38 @@ it("adds the failing checks to a given composer instead of opening a new thread"
   await clickButton(screen.container, "Fix");
   expect(state.newThread).not.toHaveBeenCalled();
   expect(state.prepareThread).not.toHaveBeenCalled();
-  expect(useComposerDraftStore.getState().getComposerDraft(threadRef)?.prompt).toContain(
-    "https://github.com/owner/repo/pull/1",
+  const fixDraft = useComposerDraftStore.getState().getComposerDraft(threadRef);
+  expect(fixDraft?.prompt).toContain("Fix the actionable findings attached");
+  expect(fixDraft?.prompt).not.toContain("> CI-failure");
+  expect(fixDraft?.prompt).toContain(
+    "Verify the checkout matches this branch before making changes, switch to it if it does not",
   );
+  expect(fixDraft?.reviewComments.map((comment) => comment.rangeLabel)).toEqual([
+    "Test PR",
+    "CI-failure",
+  ]);
+  await act(async () => {
+    state.mergeability = "conflicting";
+    await screen.rerender(
+      <ThreadDetailsPrRow
+        environmentId={EnvironmentId.make("environment")}
+        pr={null}
+        number={1}
+        status={null}
+        project={null}
+        label="Test PR"
+        openAriaLabel="Open PR"
+        onOpen={vi.fn()}
+        composerTarget={threadRef}
+      />,
+    );
+  });
+  await clickButton(screen.container, "Resolve");
+  expect(useComposerDraftStore.getState().getComposerDraft(threadRef)?.prompt).toContain(
+    "Resolve the conflicts between the attached pull request",
+  );
+  expect(state.newThread).not.toHaveBeenCalled();
+  expect(state.prepareThread).not.toHaveBeenCalled();
 });
 
 const repositoryClone = {
