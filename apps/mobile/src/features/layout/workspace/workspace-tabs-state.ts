@@ -92,6 +92,8 @@ export function workspaceTabsReducer(
       };
       break;
     case "query":
+      // Settings search is session-scoped; a late native text event after cancel must not stick.
+      if (tab === "settings" && current.searchMode === "resting") return state;
       next = { ...current, query: action.query };
       break;
     case "expand":
@@ -121,6 +123,11 @@ export function workspaceTabsReducer(
 export function shouldRestoreNativeSearch(tab: WorkspaceTabState, keepsEmptySearchOpen: boolean) {
   if (tab.searchMode === "resting") return false;
   return tab.searchMode === "active" || tab.query !== "" || keepsEmptySearchOpen;
+}
+
+/** Settings list filter follows the open search session only. */
+export function settingsSearchQuery(tab: WorkspaceTabState) {
+  return tab.searchMode === "resting" ? "" : tab.query;
 }
 
 export const WORKSPACE_TOOLBAR = { height: 48, expandedGap: 10, edge: 16, gap: 8 };

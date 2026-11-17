@@ -17,7 +17,7 @@ import { EmptyState } from "../../components/ui/EmptyState";
 import { useAuth, useUser } from "@clerk/expo";
 import { useNavigation, useNavigationState } from "@react-navigation/native";
 import { use, type ComponentProps } from "react";
-import { Platform, View } from "react-native";
+import { Keyboard, Platform, View } from "react-native";
 import { useNativeColumnLayoutMetrics } from "../../native/native-layout-metrics";
 import { deriveProjectGroupLabel } from "@t3tools/client-runtime/state/project-grouping";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -25,6 +25,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { hasCloudPublicConfig } from "../cloud/publicConfig";
 import { useAdaptiveWorkspaceLayout } from "../layout/adaptive-workspace-context";
 import { useSavedRemoteConnections } from "../../state/use-remote-environment-registry";
+import { useHardwareBack } from "../../lib/backHandler";
 import { SettingsRow } from "./components/SettingsRow";
 import { SettingsSection, SettingsSidebarContext } from "./components/SettingsSection";
 import { SettingsScreen } from "./components/SettingsScreen";
@@ -36,6 +37,7 @@ import { usePaneRole } from "../../components/ui/Pane";
 import { I18nProvider, useGT, useLanguagePreference } from "../../i18n/I18nProvider";
 import { nativeLanguageName } from "@t3tools/client-runtime/locales";
 import { SUPPORTED_LOCALES } from "../../i18n/locales";
+import { settingsSearchQuery } from "../layout/workspace/workspace-tabs-state";
 
 export function SettingsRouteScreen() {
   const list = useSettingsListPlacement();
@@ -92,6 +94,17 @@ function TranslatedSettingsListScreen(props: {
   const gt = useGT();
   const workspace = useWorkspaceTabs();
   const environmentMenu = useSettingsEnvironmentMenu();
+  const settings = workspace?.state.tabs.settings;
+  const searching = settings !== undefined && settings.searchMode !== "resting";
+  // Controlled AppBar search leaves Back to the owner; close search before leaving Settings.
+  useHardwareBack(searching, () => {
+    if (Keyboard.isVisible()) {
+      Keyboard.dismiss();
+      return true;
+    }
+    workspace?.dispatch({ type: "cancel", tab: "settings" });
+    return true;
+  });
   return (
     <SettingsSidebarContext value={props.sidebar ? { selected: props.selected } : null}>
       <View className="flex-1 bg-screen">
@@ -100,12 +113,18 @@ function TranslatedSettingsListScreen(props: {
           workspaceRoot={props.sidebar}
           menus={[environmentMenu]}
           search={
-            workspace
+            workspace && settings
               ? {
-                  value: workspace.state.tabs.settings.query,
+                  value: settings.query,
                   onChangeText: (query) =>
                     workspace.dispatch({ type: "query", tab: "settings", query }),
                   placeholder: gt("Search settings"),
+                  active: searching,
+                  onOpen: () => workspace.dispatch({ type: "search", tab: "settings" }),
+                  onClose: () => {
+                    Keyboard.dismiss();
+                    workspace.dispatch({ type: "cancel", tab: "settings" });
+                  },
                 }
               : undefined
           }
@@ -190,7 +209,8 @@ function SettingsList(props: { readonly connections: readonly SettingsListRow[] 
   // UIKit insets the scroll view by its column's safe area, which this context can report as 0.
   const bottomSafeArea = useNativeColumnLayoutMetrics()?.safeArea.bottom ?? insets.bottom;
   const workspace = useWorkspaceTabs();
-  const query = workspace?.state.tabs.settings.query ?? "";
+  const settings = workspace?.state.tabs.settings;
+  const query = settings ? settingsSearchQuery(settings) : "";
   const overflowRows = useOverflowRows();
   const indexSections = useSettingsIndexSections();
   const sections = filterSettingsSections(

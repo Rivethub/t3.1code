@@ -1,6 +1,6 @@
 import { RegistryContext, useAtomValue } from "@effect/atom-react";
 import { AsyncResult, Atom } from "effect/reactivity";
-import { createContext, use, useState, type Dispatch, type ReactNode } from "react";
+import { createContext, use, useEffect, useState, type Dispatch, type ReactNode } from "react";
 
 import { mobilePreferencesAtom } from "../../../state/preferences";
 import {
@@ -82,14 +82,24 @@ export function WorkspaceTabsProvider(props: {
   const registry = use(RegistryContext);
   const [model] = useState(() => createWorkspaceTabsModel(props.initialTab));
   const state = useAtomValue(model.resolved);
+  const settingsOpen = props.settingsOpen ?? false;
   const dispatch = (action: WorkspaceTabsAction) =>
     registry.set(model.stored, workspaceTabsReducer(registry.get(model.resolved), action));
+  // Settings search belongs to the open Settings session; leaving ends it.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- ends settings search when Settings closes
+  useEffect(() => {
+    if (settingsOpen) return;
+    const current = registry.get(model.resolved);
+    const settings = current.tabs.settings;
+    if (settings.searchMode === "resting" && settings.query === "") return;
+    registry.set(model.stored, workspaceTabsReducer(current, { type: "cancel", tab: "settings" }));
+  }, [settingsOpen, registry, model]);
   const context = {
     state,
     dispatch,
     isTabActive: (tab: WorkspaceTab) => registry.get(model.resolved).selectedTab === tab,
     bottomClearance: 0,
-    settingsOpen: props.settingsOpen ?? false,
+    settingsOpen,
     getScrollOffset: model.getScrollOffset,
     recordScrollOffset: model.recordScrollOffset,
     cancelSearch: (tab: WorkspaceSearchTab) => {

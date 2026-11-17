@@ -49,6 +49,7 @@ export function WorkspaceToolbar(props: {
   const { layout, togglePrimarySidebar } = useAdaptiveWorkspaceLayout();
   const { panes } = useWorkspacePaneState();
   const searchRef = useRef<SearchBarCommands>(null);
+  const submittingSearch = useRef(false);
   const settingsMenu = useSettingsEnvironmentMenu();
   // The Settings list takes the selected tab's place, so search follows it.
   const selectedTab = workspace.settingsOpen ? "settings" : workspace.state.selectedTab;
@@ -85,6 +86,25 @@ export function WorkspaceToolbar(props: {
     tab.searchMode === "resting"
       ? enterSearch()
       : workspace.dispatch({ type: "search", tab: selectedTab });
+  // Integrated Settings search collapses on a dismissing blur; end the session so the list cannot
+  // stay filtered behind a closed button. The keyboard Search key blurs too but keeps the query.
+  // The Duo keeps its field mounted, so it expands like the other tabs.
+  const blurSearch = () => {
+    const submitted = submittingSearch.current;
+    submittingSearch.current = false;
+    if (selectedTab === "settings" && NATIVE_LIQUID_GLASS_SUPPORTED && !duoSearch && !submitted) {
+      cancelSearch();
+      return;
+    }
+    workspace.dispatch({ type: "expand", tab: selectedTab });
+  };
+  // External cancels (page open, leaving Settings) skip UIKit's cancel control.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- clears the native search field when settings search becomes resting
+  useEffect(() => {
+    if (selectedTab !== "settings" || tab.searchMode !== "resting") return;
+    searchRef.current?.setText("");
+    if (NATIVE_LIQUID_GLASS_SUPPORTED) searchRef.current?.setActive(false);
+  }, [selectedTab, tab.searchMode]);
   useHardwareKeyboardCommand("focusSearch", focusSearch);
   // Home draws the Settings list under the `Settings` route, which holds navigation focus.
   const settingsListOnTop = useNavigationState(
@@ -93,6 +113,8 @@ export function WorkspaceToolbar(props: {
   // The sidebar remains visible while its detail owns navigation focus.
   const searchHostVisible = focused || settingsListOnTop || primaryColumn?.presented === true;
   const restoreSearch = () => {
+    // Settings search is session-scoped; do not re-open a dismissed query the way Threads/PRs do.
+    if (selectedTab === "settings" && tab.searchMode === "resting") return;
     // A search cancelled while its screen was covered leaves its text in the native field.
     if (tab.searchMode === "resting") searchRef.current?.setText("");
     if (
@@ -173,8 +195,11 @@ export function WorkspaceToolbar(props: {
                   placeholder: searchLabel,
                   cancelButtonHidden: foldedSearch,
                   onFocus: searchFocused,
-                  onBlur: () => workspace.dispatch({ type: "expand", tab: selectedTab }),
-                  onSearchButtonPress: () => searchRef.current?.blur(),
+                  onBlur: blurSearch,
+                  onSearchButtonPress: () => {
+                    submittingSearch.current = true;
+                    searchRef.current?.blur();
+                  },
                   onChangeText: ({ nativeEvent }) =>
                     workspace.dispatch({
                       type: "query",

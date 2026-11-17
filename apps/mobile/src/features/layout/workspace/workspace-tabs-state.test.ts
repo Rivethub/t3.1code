@@ -5,6 +5,7 @@ import { WorkspaceRootScreen } from "./WorkspaceRootScreen.android";
 import {
   initialWorkspaceTabsState,
   workspaceTabsReducer,
+  settingsSearchQuery,
   shouldRestoreNativeSearch,
   workspaceTabForNativeSlot,
   resolveWorkspaceTabOrder,
@@ -125,9 +126,18 @@ describe("workspace root navigation", () => {
     state = workspaceTabsReducer(state, { type: "search", tab: "settings" });
     state = workspaceTabsReducer(state, { type: "query", query: "theme", tab: "settings" });
     expect(state.tabs.settings).toMatchObject({ query: "theme", searchMode: "active" });
+    state = workspaceTabsReducer(state, { type: "expand", tab: "settings" });
+    expect(settingsSearchQuery(state.tabs.settings)).toBe("theme");
     state = workspaceTabsReducer(state, { type: "cancel", tab: "settings" });
     expect(state.tabs.settings).toMatchObject({ query: "", searchMode: "resting" });
     expect(state.tabs.threads.query).toBe("diff");
+    // A late native text event after the bar closed must not filter the list or the next session.
+    state = workspaceTabsReducer(state, { type: "query", query: "theme", tab: "settings" });
+    expect(state.tabs.settings).toMatchObject({ query: "", searchMode: "resting" });
+    expect(settingsSearchQuery(state.tabs.settings)).toBe("");
+    state = workspaceTabsReducer(state, { type: "search", tab: "settings" });
+    expect(state.tabs.settings).toMatchObject({ query: "", searchMode: "active" });
+    expect(settingsSearchQuery(state.tabs.settings)).toBe("");
   });
 
   it("a late native blur cannot reopen a cancelled search", () => {
