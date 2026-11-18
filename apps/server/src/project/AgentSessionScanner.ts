@@ -10,6 +10,7 @@ import {
   ProviderDriverKind,
   ProviderInstanceId,
   resolveProviderInstanceEnabled,
+  type AgentSessionImportTarget,
   type AgentSessionProjectCandidate,
   type AgentSessionProjectGit,
   type AgentSessionScanResult,
@@ -237,6 +238,7 @@ export class AgentSessionScanner extends Context.Service<
     readonly recentThreads: (
       workspaceRoot: string,
       completedSources?: ReadonlyArray<AgentSessionImportSource>,
+      target?: AgentSessionImportTarget,
     ) => Stream.Stream<AgentSessionRecentThread, AgentSessionScanError>;
   }
 >()("t3/project/AgentSessionScanner") {}
@@ -1925,6 +1927,7 @@ export const make = Effect.gen(function* () {
   const prepareRecentThreads = Effect.fn("AgentSessionScanner.prepareRecentThreads")(function* (
     workspaceRoot: string,
     completedSources: ReadonlyArray<AgentSessionImportSource>,
+    target?: AgentSessionImportTarget,
   ) {
     const root = path.resolve(expandHomePath(workspaceRoot, homeDir));
     const realRoot = yield* fileSystem.realPath(root).pipe(Effect.orElseSucceed(() => root));
@@ -1934,10 +1937,13 @@ export const make = Effect.gen(function* () {
     const cutoffMs = nowMs - RECENT_THREAD_WINDOW_MS;
 
     // Imports recorded since a budget-truncated collection can free budget for transcripts it cut off.
-    if (cachedCandidates === null || cachedCandidates.metadataTruncated) {
+    if (target || cachedCandidates === null || cachedCandidates.metadataTruncated) {
       cachedCandidates = yield* collectCandidates();
     }
-    const { candidates } = cachedCandidates;
+    const candidates =
+      target === undefined
+        ? cachedCandidates.candidates
+        : cachedCandidates.candidates.filter((candidate) => candidate.source === target.driver);
 
     // The scan counts a linked worktree's sessions toward its main checkout, so import them with it.
     const candidateDirectories = candidates.flatMap((candidate) => {
@@ -1991,11 +1997,21 @@ export const make = Effect.gen(function* () {
       for (const transcript of candidate.transcripts) {
         if (
           transcript.mtimeMs === null ||
-          transcript.mtimeMs < cutoffMs ||
+          (target === undefined && transcript.mtimeMs < cutoffMs) ||
           transcript.mtimeMs > nowMs
         ) {
           continue;
         }
+        if (
+          target?.driver === "codex" &&
+          CODEX_ROLLOUT_ID_PATTERN.exec(transcript.filePath)?.[1] !== target.nativeSessionId
+        )
+          continue;
+        if (
+          target?.driver === "claudeAgent" &&
+          path.basename(transcript.filePath, ".jsonl") !== target.nativeSessionId
+        )
+          continue;
         eligibleTranscripts.push({
           candidate,
           transcript: { ...transcript, mtimeMs: transcript.mtimeMs },
@@ -2088,6 +2104,12 @@ export const make = Effect.gen(function* () {
               source.provider === candidate.source && sameTranscriptIdentity(source, identity),
           );
           if (completedSource !== undefined) {
+            if (
+              target &&
+              completedSource.providerSessionId !== target.nativeSessionId &&
+              completedSource.filePath !== target.nativeSessionId
+            )
+              return Option.none<AgentSessionRecentThread>();
             const sessionKey = `${completedSource.providerInstanceId}\0${completedSource.providerSessionId}`;
             if (importedSessions.has(sessionKey)) return Option.none<AgentSessionRecentThread>();
             importedSessions.add(sessionKey);
@@ -2160,6 +2182,12 @@ export const make = Effect.gen(function* () {
           if (parsedThread === null) {
             return Option.some<AgentSessionRecentThread>({ _tag: "Skipped" });
           }
+          if (
+            target &&
+            parsedThread.providerSessionId !== target.nativeSessionId &&
+            transcript.filePath !== target.nativeSessionId
+          )
+            return Option.none<AgentSessionRecentThread>();
           let savedTitle: string | undefined;
           if (candidate.source === "codex") {
             const names =
@@ -2197,7 +2225,8 @@ export const make = Effect.gen(function* () {
   const recentThreads: AgentSessionScanner["Service"]["recentThreads"] = (
     workspaceRoot,
     completedSources = [],
-  ) => Stream.unwrap(prepareRecentThreads(workspaceRoot, completedSources));
+    target,
+  ) => Stream.unwrap(prepareRecentThreads(workspaceRoot, completedSources, target));
 
   return AgentSessionScanner.of({ scan, recentThreads });
 });

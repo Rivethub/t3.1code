@@ -15,6 +15,7 @@ import {
   ThreadId,
   TurnItemId,
   type AgentSessionImportInput,
+  type AgentSessionImportTarget,
   type AgentSessionImportResult,
   type OrchestrationV2AppThread,
   type OrchestrationV2ConversationMessage,
@@ -31,6 +32,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
+import * as SqlClient from "effect/sql/SqlClient";
 
 import * as EventSink from "../orchestration-v2/EventSink.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
@@ -46,6 +48,8 @@ import * as ProjectService from "./ProjectService.ts";
 const isProjectionStoreThreadNotFoundError = Schema.is(
   ProjectionStore.ProjectionStoreThreadNotFoundError,
 );
+
+const canImportDriver = Schema.is(AgentSessionSource);
 
 const IMPORT_EVENT_PREFIX = "agent-session-import:v2";
 const CLAUDE_SESSION_ID_PATTERN =
@@ -204,16 +208,48 @@ const make = Effect.gen(function* () {
   const registry = yield* ProviderAdapterRegistry.ProviderAdapterRegistryV2;
   const threadCommands = yield* ThreadCommandExecutor.ThreadCommandExecutor;
   const settingsService = yield* ServerSettings.ServerSettingsService;
+  const sql = yield* SqlClient.SqlClient;
+  const findNativeThread = Effect.fn("AgentSessionImporter.findNativeThread")(function* (
+    target: AgentSessionImportTarget,
+  ) {
+    const threads = yield* sql<{ threadId: ThreadId }>`
+      SELECT DISTINCT t.thread_id AS threadId
+      FROM orchestration_v2_projection_provider_threads AS p
+      JOIN orchestration_v2_projection_threads AS t ON t.thread_id = p.thread_id
+      WHERE p.driver = ${target.driver} AND t.deleted_at IS NULL
+        AND json_extract(p.payload_json, '$.nativeThreadRef.nativeId') = ${target.nativeSessionId}
+      LIMIT 2
+    `.pipe(
+      Effect.mapError((cause) => new AgentSessionScanError({ operation: "read-projects", cause })),
+    );
+    return threads.length > 1 ? ("ambiguous" as const) : threads[0]?.threadId;
+  });
   const ceiling = settingsService.managedPolicy?.limits?.maxRuntimeMode;
   const importRecentAgentThreads = Effect.fn("importRecentAgentThreadsV2")(function* (
     input: AgentSessionImportInput,
   ) {
-    const project = yield* projects.getById(input.projectId).pipe(
+    const target = input.target;
+    if (target) {
+      const existing = yield* findNativeThread(target);
+      if (
+        existing !== undefined ||
+        input.projectId === undefined ||
+        !canImportDriver(target.driver)
+      ) {
+        return {
+          importedCount: 0,
+          skippedCount: 0,
+          ...(existing && existing !== "ambiguous" ? { threadId: existing } : {}),
+        };
+      }
+    }
+    const projectId = input.projectId;
+    if (projectId === undefined) return { importedCount: 0, skippedCount: 0 };
+    const project = yield* projects.getById(projectId).pipe(
       Effect.mapError((cause) => new AgentSessionScanError({ operation: "read-projects", cause })),
       Effect.flatMap(
         Option.match({
-          onNone: () =>
-            Effect.fail(new AgentSessionImportProjectNotFoundError({ projectId: input.projectId })),
+          onNone: () => Effect.fail(new AgentSessionImportProjectNotFoundError({ projectId })),
           onSome: Effect.succeed,
         }),
       ),
@@ -223,7 +259,7 @@ const make = Effect.gen(function* () {
       normalizeProjectPathForComparison(project.workspaceRoot) !==
         normalizeProjectPathForComparison(input.expectedWorkspaceRoot)
     ) {
-      return yield* new AgentSessionImportProjectChangedError({ projectId: input.projectId });
+      return yield* new AgentSessionImportProjectChangedError({ projectId });
     }
     // Imports run in full access, except under a policy ceiling: then in the project's default,
     // which the policy keeps under it, so imported threads never sit above the ceiling.
@@ -235,7 +271,7 @@ const make = Effect.gen(function* () {
               (cause) => new AgentSessionScanError({ operation: "read-settings", cause }),
             ),
             Effect.map((settings) => {
-              const mode = resolveProjectSettings(settings, input.projectId, project).settings
+              const mode = resolveProjectSettings(settings, projectId, project).settings
                 .defaultRuntimeMode;
               return isRuntimeModeAbove(mode, ceiling) ? ceiling : mode;
             }),
@@ -254,7 +290,11 @@ const make = Effect.gen(function* () {
       ).pipe(Option.flatMapNullishOr((payload) => payload.importedTranscripts));
       if (Option.isNone(imported) || imported.value.length === 0) return Effect.succeed([]);
       return orchestrator.getThreadRecords(runtime.threadId, []).pipe(
-        Effect.map(({ thread }) => (thread.projectId === input.projectId ? imported.value : [])),
+        Effect.map(({ thread }) =>
+          thread.projectId === projectId && (!target || thread.deletedAt === null)
+            ? imported.value
+            : [],
+        ),
         Effect.catch((cause) =>
           isProjectionStoreThreadNotFoundError(cause.cause)
             ? Effect.succeed([])
@@ -262,13 +302,15 @@ const make = Effect.gen(function* () {
         ),
       );
     })).flat();
-    const outcomes = scanner.recentThreads(project.workspaceRoot, completedSources);
+    const outcomes = scanner.recentThreads(project.workspaceRoot, completedSources, target);
     const importedThreadIds = new Set<ThreadId>();
+    let matchedThreadId: ThreadId | undefined;
     let importedCount = 0;
     let skippedCount = 0;
 
     yield* Stream.runForEach(outcomes, (outcome) =>
       Effect.gen(function* () {
+        if (matchedThreadId !== undefined) return;
         if (outcome._tag === "Skipped") {
           skippedCount += 1;
           return;
@@ -279,6 +321,7 @@ const make = Effect.gen(function* () {
         );
         if (outcome._tag === "AlreadyImported") {
           importedThreadIds.add(threadId);
+          if (target) matchedThreadId = threadId;
           return;
         }
         if (outcome._tag === "Duplicate") {
@@ -324,10 +367,10 @@ const make = Effect.gen(function* () {
             orchestrator.getThreadRecords(threadId, ["messages"]),
           );
           if (Option.isSome(existing)) {
-            if (existing.value.thread.projectId !== input.projectId) {
+            if (existing.value.thread.projectId !== projectId) {
               return yield* new AgentSessionThreadProjectConflictError({
                 threadId,
-                expectedProjectId: input.projectId,
+                expectedProjectId: projectId,
                 actualProjectId: existing.value.thread.projectId,
               });
             }
@@ -350,6 +393,7 @@ const make = Effect.gen(function* () {
             yield* persistRuntime;
             yield* runtimes.recordImportedTranscript({ threadId, source });
             importedThreadIds.add(threadId);
+            if (target) matchedThreadId = threadId;
             return null;
           }
 
@@ -365,7 +409,7 @@ const make = Effect.gen(function* () {
             createdBy: "system",
             creationSource: "server",
             id: threadId,
-            projectId: input.projectId,
+            projectId,
             title: thread.title.trim() === "" ? "Untitled thread" : thread.title,
             providerInstanceId: thread.providerInstanceId,
             modelSelection: { instanceId: thread.providerInstanceId, model },
@@ -473,7 +517,13 @@ const make = Effect.gen(function* () {
               },
             ],
           });
-          if (committed.length === 0) return null;
+          if (committed.length === 0) {
+            if (target) {
+              const owner = yield* findNativeThread({ driver, nativeSessionId: nativeThreadId });
+              if (owner && owner !== "ambiguous") matchedThreadId = owner;
+            }
+            return null;
+          }
           yield* persistRuntime;
           yield* runtimes.recordImportedTranscript({ threadId, source });
           return true;
@@ -488,6 +538,7 @@ const make = Effect.gen(function* () {
         );
         if (imported === true) {
           importedThreadIds.add(threadId);
+          if (target) matchedThreadId = threadId;
           importedCount += 1;
         } else if (imported === false) {
           skippedCount += 1;
@@ -495,7 +546,11 @@ const make = Effect.gen(function* () {
       }),
     );
 
-    return { importedCount, skippedCount } satisfies AgentSessionImportResult;
+    return {
+      importedCount,
+      skippedCount,
+      ...(matchedThreadId ? { threadId: matchedThreadId } : {}),
+    } satisfies AgentSessionImportResult;
   });
 
   /**

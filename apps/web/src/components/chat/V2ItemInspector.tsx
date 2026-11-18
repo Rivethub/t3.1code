@@ -1,3 +1,4 @@
+import { linkifyToolOutput, ToolOutputLinks } from "../../memory/memoryLinks";
 import type { ToolCallDiffTarget } from "../../diffPanelStore";
 import type { EnvironmentId, OrchestrationV2ProjectedTurnItem } from "@t3tools/contracts";
 import {
@@ -78,9 +79,12 @@ function StructuredValue({
   const text = typeof value === "string" ? value : JSON.stringify(value, null, 2);
   const isJson = highlightJson && isJsonToolText(text);
   if (!text) return null;
+  const links = highlightJson ? linkifyToolOutput(text) : null;
   return (
     <pre className={cn("max-h-80 overflow-auto text-muted-foreground", monoClassName)}>
-      {language || isJson ? (
+      {links ? (
+        <ToolOutputLinks pieces={links} />
+      ) : language || isJson ? (
         <RenderErrorBoundary fallback={text}>
           <Suspense fallback={text}>
             <SyntaxTokens text={text} language={language ?? "json"} />

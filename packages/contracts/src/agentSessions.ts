@@ -1,6 +1,12 @@
 import * as Schema from "effect/Schema";
-import { IsoDateTime, NonNegativeInt, ProjectId, TrimmedNonEmptyString } from "./baseSchemas.ts";
-import { ProviderInstanceId } from "./providerInstance.ts";
+import {
+  IsoDateTime,
+  NonNegativeInt,
+  ProjectId,
+  ThreadId,
+  TrimmedNonEmptyString,
+} from "./baseSchemas.ts";
+import { ProviderDriverKind, ProviderInstanceId } from "./providerInstance.ts";
 
 export const AgentSessionSource = Schema.Literals(["claudeAgent", "codex", "pi"]);
 export type AgentSessionSource = typeof AgentSessionSource.Type;
@@ -48,10 +54,24 @@ export const AgentSessionScanResult = Schema.Struct({
 });
 export type AgentSessionScanResult = typeof AgentSessionScanResult.Type;
 
-export const AgentSessionImportInput = Schema.Struct({
-  projectId: ProjectId,
-  expectedWorkspaceRoot: Schema.optional(TrimmedNonEmptyString),
+const AgentSessionImportTarget = Schema.Struct({
+  driver: ProviderDriverKind,
+  nativeSessionId: TrimmedNonEmptyString.check(Schema.isMaxLength(4096)),
 });
+export type AgentSessionImportTarget = typeof AgentSessionImportTarget.Type;
+
+export const AgentSessionImportInput = Schema.Union([
+  Schema.Struct({
+    projectId: ProjectId,
+    expectedWorkspaceRoot: Schema.optional(TrimmedNonEmptyString),
+    target: Schema.optionalKey(AgentSessionImportTarget),
+  }),
+  Schema.Struct({
+    projectId: Schema.optionalKey(Schema.Never),
+    expectedWorkspaceRoot: Schema.optionalKey(Schema.Never),
+    target: AgentSessionImportTarget,
+  }),
+]);
 export type AgentSessionImportInput = typeof AgentSessionImportInput.Type;
 
 export class AgentSessionImportProjectNotFoundError extends Schema.TaggedError<AgentSessionImportProjectNotFoundError>()(
@@ -73,6 +93,7 @@ export class AgentSessionImportProjectChangedError extends Schema.TaggedError<Ag
 }
 
 export const AgentSessionImportResult = Schema.Struct({
+  threadId: Schema.optionalKey(ThreadId),
   importedCount: NonNegativeInt,
   skippedCount: NonNegativeInt,
 });

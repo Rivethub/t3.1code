@@ -10,7 +10,12 @@ import * as Semaphore from "effect/Semaphore";
 
 import * as Electron from "electron";
 
-import { type DesktopSnapShotEvent, DEFAULT_CLIENT_SETTINGS } from "@t3tools/contracts";
+import {
+  type DesktopSnapShotEvent,
+  DEFAULT_CLIENT_SETTINGS,
+  MEMORY_PARTITION,
+  memoryLinkPath,
+} from "@t3tools/contracts";
 
 import * as DesktopAssets from "../app/DesktopAssets.ts";
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
@@ -30,6 +35,8 @@ import {
   TRACKPAD_SCROLL_END_CHANNEL,
   WINDOW_FULLSCREEN_STATE_CHANNEL,
 } from "../ipc/channels.ts";
+import { getMemoryOrigin } from "../ipc/methods/memory.ts";
+import { isMemoryWebview, prepareMemoryWebview } from "../memory/DesktopMemory.ts";
 import {
   PASSKEY_BRIDGE_ARGUMENT,
   PRIMARY_PASTE_DISABLED_ARGUMENT,
@@ -618,6 +625,22 @@ export const make = Effect.gen(function* () {
       return Option.none();
     }
     window.webContents.on("will-attach-webview", (event, webPreferences, params) => {
+      if (params.partition === MEMORY_PARTITION) {
+        const origin = getMemoryOrigin();
+        if (!origin || !params.src || memoryLinkPath(origin, params.src) === null) {
+          event.preventDefault();
+          return;
+        }
+        webPreferences.sandbox = true;
+        webPreferences.contextIsolation = true;
+        webPreferences.nodeIntegration = false;
+        webPreferences.nodeIntegrationInSubFrames = false;
+        webPreferences.webviewTag = false;
+        webPreferences.webSecurity = true;
+        webPreferences.allowRunningInsecureContent = false;
+        webPreferences.preload = `${__dirname}/memory-preload.cjs`;
+        return;
+      }
       if (
         typeof params.partition !== "string" ||
         !previewManager.isBrowserPartition(params.partition)
@@ -736,6 +759,11 @@ export const make = Effect.gen(function* () {
     installContextMenu(window, window.webContents);
     window.webContents.on("did-attach-webview", (_event, contents) => {
       installContextMenu(window, contents);
+      const origin = getMemoryOrigin();
+      if (origin && isMemoryWebview(contents)) {
+        prepareMemoryWebview(contents, origin);
+        return;
+      }
       void runPromise(previewManager.prepareWebview(contents));
     });
 

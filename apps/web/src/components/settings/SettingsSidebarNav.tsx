@@ -11,6 +11,7 @@ import {
   ArchiveIcon,
   FlaskConicalIcon,
   BotIcon,
+  BrainIcon,
   createLucideIcon,
   CalendarClockIcon,
   FileDiffIcon,
@@ -100,6 +101,7 @@ const SETTINGS_SECTION_ICONS: Readonly<
   "/settings/providers": BotIcon,
   "/settings/threads": MessagesSquareIcon,
   "/settings/browser": GlobeIcon,
+  "/settings/memory": BrainIcon,
   "/settings/devices": SmartphoneIcon,
   "/settings/scheduled-tasks": CalendarClockIcon,
   "/settings/source-control": GitBranchIcon,
@@ -396,6 +398,8 @@ export function SettingsSidebarNav({ pathname }: { pathname: string }) {
                       <div role="group" aria-labelledby={`settings-nav-group-${index}`}>
                         <SidebarMenu>
                           {group.paths.map((to) => {
+                            if (to === "/settings/memory" && !window.desktopBridge?.memory)
+                              return null;
                             const Icon = SETTINGS_SECTION_ICONS[to];
                             const isActive = activePath === to || activePath.startsWith(`${to}/`);
                             return (

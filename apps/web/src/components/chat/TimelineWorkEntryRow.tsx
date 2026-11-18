@@ -30,6 +30,7 @@ import {
   workEntrySignalsSevereFailure,
   workLogEntryIsToolLike,
 } from "../../session-logic";
+import { linkifyToolOutput, ToolOutputLinks } from "../../memory/memoryLinks";
 import ChatMarkdown from "../ChatMarkdown";
 import { ChatMarkdownAssetImage } from "./ChatMarkdownMedia";
 import type { ExpandedImagePreview } from "./ExpandedImagePreview";
@@ -596,9 +597,7 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
             />
           ) : (
             <>
-              {expandedBody ? (
-                <pre className={toolCallExpandedBodyClassName}>{expandedBody}</pre>
-              ) : null}
+              {expandedBody ? <ExpandedToolText text={expandedBody} /> : null}
               {plainOutputFetches && workEntry.projectedItem ? (
                 <FetchedToolOutput
                   onInitialOutputReady={onInitialOutputReady}
@@ -613,6 +612,15 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
         </WorkLogDetails>
       ) : null}
     </WorkLogRow>
+  );
+}
+
+function ExpandedToolText({ text }: { text: string }) {
+  const links = linkifyToolOutput(text);
+  return (
+    <pre className={toolCallExpandedBodyClassName}>
+      {links ? <ToolOutputLinks pieces={links} /> : text}
+    </pre>
   );
 }
 
