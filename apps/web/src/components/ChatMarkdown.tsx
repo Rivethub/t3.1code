@@ -136,6 +136,7 @@ import {
 import { openInEditorMenuLabel } from "../editorLabels";
 import { resolveDiffThemeName } from "../lib/diffRendering";
 import { RenderErrorBoundary } from "./RenderErrorBoundary";
+import { useMemoryLink } from "../memory/memoryLinks";
 import { useRenderedAppearance } from "../hooks/useTheme";
 import { useClientSettings } from "../hooks/useSettings";
 import { chatMarkdownClipboardPayload } from "../markdown-clipboard";
@@ -1169,6 +1170,7 @@ const CHAT_MARKDOWN_COMPONENTS = {
       fileLinkChip,
       renderContextReference,
     } = use(ChatMarkdownRendererContext);
+    const openMemoryLink = useMemoryLink();
     const text = use(ChatMarkdownTextContext);
     const citation = href ? parseAssistantCitationHref(href) : null;
     const before = node?.position?.start.offset;
@@ -1245,6 +1247,32 @@ const CHAT_MARKDOWN_COMPONENTS = {
           rel={isSameDocumentLink ? undefined : "noopener noreferrer"}
           onClick={(event) => {
             onClick?.(event);
+            if (
+              href &&
+              openMemoryLink(event, href, () => {
+                const target = resolveLinkTarget({
+                  url: href,
+                  event,
+                  preference: linkTargetPreference,
+                  canOpenInApp: canOpenInPreview,
+                });
+                if (target === "app") {
+                  void openExternalLinkInPreview(href).then((result) => {
+                    if (result._tag === "Success" || isAtomCommandInterrupted(result)) return;
+                    if (!isBrowserSettingsReadError(squashAtomCommandFailure(result))) {
+                      void readLocalApi()
+                        ?.shell.openExternal(href)
+                        .catch(() => {});
+                    }
+                  });
+                } else {
+                  void readLocalApi()
+                    ?.shell.openExternal(href)
+                    .catch(() => {});
+                }
+              })
+            )
+              return;
             if (isSameDocumentLink && href) {
               handleMarkdownFragmentClick(event, href);
               return;

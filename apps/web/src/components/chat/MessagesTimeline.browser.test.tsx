@@ -2158,6 +2158,41 @@ describe("ChangedFilesCard", () => {
   );
 });
 
+it("opens a node link from expanded MCP tool output in Memory", async () => {
+  setup();
+  const url = "https://localhost:5174/topics/desktop?view=recent#sessions";
+  const link = vi.fn().mockResolvedValue("/topics/desktop?view=recent#sessions");
+  const openExternal = vi.fn();
+  using _bridge = stubGlobal("desktopBridge", {
+    memory: { link },
+    openExternal,
+    getClientSettings: async () => null,
+  });
+  await using screen = await renderTimeline([
+    work("recall", {
+      label: "Recall results",
+      toolTitle: "Recall results",
+      tone: "tool",
+      itemType: "dynamic_tool",
+      toolLifecycleStatus: "completed",
+      projectedItem: v2Item("dynamic_tool", {
+        toolName: "recall",
+        source: "mcp",
+        output: { content: [{ type: "text", text: JSON.stringify({ hits: [{ url }] }) }] },
+      }),
+    }),
+  ]);
+  await screen.getByRole("button", { name: /Recall results/ }).click();
+  const outputLink = screen.getByRole("link", { name: url });
+  await expect.element(outputLink).toHaveAttribute("href", url);
+  await outputLink.click();
+  await vi.waitFor(() => expect(screen.router?.state.location.pathname).toBe("/memory"));
+  expect(screen.router?.state.location.search).toEqual({
+    path: "/topics/desktop?view=recent#sessions",
+  });
+  expect(openExternal).not.toHaveBeenCalled();
+});
+
 it("keeps concurrent approvals actionable outside collapsed work and restores settled rows", async () => {
   setup();
   const fixture = makeStreamingTimelineFixture();

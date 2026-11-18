@@ -2250,6 +2250,51 @@ it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
       }),
     );
 
+    it.effect(
+      "finds a requested native session written after the scan even outside the recent window",
+      () =>
+        Effect.gen(function* () {
+          const path = yield* Path.Path;
+          const nowMs = Date.parse("2026-08-24T12:00:00.000Z");
+          yield* TestClock.setTime(nowMs);
+          const claudeHomePath = yield* makeTempDir("t3code-target-claude-");
+          const codexHomePath = yield* makeTempDir("t3code-target-codex-");
+          const workspace = yield* makeTempDir("t3code-target-workspace-");
+          const targetId = "00000000-0000-4000-8000-000000000001";
+          const recentId = "00000000-0000-4000-8000-000000000002";
+          yield* Effect.gen(function* () {
+            const scanner = yield* AgentSessionScanner.AgentSessionScanner;
+            yield* scanner.scan;
+            for (const [sessionId, mtimeMs] of [
+              [targetId, nowMs - 100 * 24 * 60 * 60 * 1000],
+              [recentId, nowMs - 60_000],
+            ] as const) {
+              yield* writeTranscript({
+                filePath: path.join(claudeHomePath, "projects", "p", `${sessionId}.jsonl`),
+                contents:
+                  encodeTranscriptRecord({
+                    type: "user",
+                    cwd: workspace,
+                    sessionId,
+                    timestamp: "2026-05-01T12:00:00.000Z",
+                    message: { role: "user", content: "Keep this prompt" },
+                  }) + "\n",
+                mtimeMs,
+              });
+            }
+            const outcomes = yield* Stream.runCollect(
+              scanner.recentThreads(workspace, [], {
+                driver: ProviderDriverKind.make("claudeAgent"),
+                nativeSessionId: targetId,
+              }),
+            );
+            expect(
+              outcomes.map((item) => item._tag === "Importable" && item.source.providerSessionId),
+            ).toEqual([targetId]);
+          }).pipe(Effect.provide(layerScannerTest({ claudeHomePath, codexHomePath })));
+        }),
+    );
+
     it.effect("repeated imports reach older transcripts behind already-imported ones", () =>
       Effect.gen(function* () {
         const path = yield* Path.Path;

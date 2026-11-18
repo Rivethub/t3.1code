@@ -159,6 +159,15 @@ export default defineConfig({
       outExtensions: () => ({ js: ".cjs" }),
       entry: ["src/mac-permission-preload.ts"],
     },
+    {
+      format: "cjs",
+      outDir: "dist-electron",
+      dts: false,
+      sourcemap: true,
+      outExtensions: () => ({ js: ".cjs" }),
+      entry: ["src/memory-preload.ts"],
+      clean: false,
+    },
   ],
   test: {
     // The Windows lane runs workspace suites concurrently; filesystem-heavy

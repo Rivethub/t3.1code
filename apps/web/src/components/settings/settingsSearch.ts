@@ -21,6 +21,7 @@ export type SettingsPath =
   | "/settings/general"
   | "/settings/diagnostics"
   | "/settings/voice"
+  | "/settings/memory"
   | "/settings/appearance"
   | "/settings/chat"
   | "/settings/diffs"
@@ -97,6 +98,7 @@ export const SETTINGS_SECTION_LABELS: Readonly<Record<SettingsPath, string>> = {
   "/settings/projects": msg("Projects"),
   "/settings/general": msg("General"),
   "/settings/appearance": msg("Appearance"),
+  "/settings/memory": msg("Memory"),
   "/settings/chat": msg("Chat"),
   "/settings/diffs": msg("Diffs & pull requests"),
   "/settings/keybindings": msg("Keybindings"),
@@ -143,6 +145,7 @@ export const SETTINGS_NAV_GROUPS: ReadonlyArray<{
       "/settings/providers",
       "/settings/threads",
       "/settings/browser",
+      "/settings/memory",
       "/settings/devices",
       "/settings/scheduled-tasks",
     ],
@@ -1381,6 +1384,7 @@ const SETTINGS_CATEGORY_SCOPES: Readonly<Record<SettingsPath, SettingsSearchScop
   "/settings/general": null,
   "/settings/voice": null,
   "/settings/appearance": null,
+  "/settings/memory": null,
   "/settings/chat": null,
   "/settings/diffs": null,
   "/settings/snap-shot": null,

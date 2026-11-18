@@ -42,6 +42,9 @@ interface ElectronWebview extends HTMLElement {
   preload?: string;
   webpreferences?: string;
   getWebContentsId: () => number;
+  getURL: () => string;
+  loadURL: (url: string) => Promise<void>;
+  send: (channel: string, ...args: unknown[]) => Promise<void>;
   executeJavaScript: (code: string, userGesture?: boolean) => Promise<unknown>;
 }
 

@@ -231,6 +231,7 @@ const makeImporter = Effect.fn(function* (
       Layer.provide(
         Layer.mergeAll(
           sinkLayer,
+          Layer.succeed(SqlClient.SqlClient, importSql),
           settings,
           Layer.succeed(IdAllocator.IdAllocatorV2, yield* IdAllocator.IdAllocatorV2),
           Layer.succeed(
@@ -279,6 +280,7 @@ const makeImporter = Effect.fn(function* (
   const importer = Context.get(context, AgentSessionImporter.AgentSessionImporter);
   return {
     run: importer.importRecentAgentThreads({ projectId }),
+    importSession: importer.importRecentAgentThreads,
     importNativeHistory: importer.importNativeHistory,
     published,
   };
@@ -327,7 +329,18 @@ it.effect(
         unownedPi,
       ]);
 
+      const target = { driver: ProviderDriverKind.make("codex"), nativeSessionId: "active" };
+      expect(yield* importer.importSession({ target })).toEqual({
+        importedCount: 0,
+        skippedCount: 0,
+        threadId: owners[0],
+      });
       expect(yield* importer.run).toEqual({ importedCount: 3, skippedCount: 0 });
+      expect(
+        yield* importer.importSession({
+          target: { ...target, nativeSessionId: "unowned" },
+        }),
+      ).toMatchObject({ importedCount: 0, threadId: importId(unowned) });
       for (const source of [active, archived, deleted, ownedPi]) {
         const threadId = importId(source);
         expect(yield* Effect.option(projections.getThread(threadId))).toEqual(Option.none());

@@ -142,3 +142,12 @@ export const TAKE_LEGACY_LOCAL_STORAGE_CHANNEL = "desktop:take-legacy-local-stor
 export const COMPLETE_LEGACY_LOCAL_STORAGE_CHANNEL = "desktop:complete-legacy-local-storage";
 
 export const RESTART_AUDIO_SERVICE_CHANNEL = "desktop:restart-audio-service";
+
+export const MEMORY_NODE_CHANNEL = "rivethub-memory:node";
+
+export const MEMORY_LINK_CHANNEL = "rivethub-memory:link";
+
+export const MEMORY_RELOGIN_CHANNEL = "rivethub-memory:relogin";
+
+export const MEMORY_APPEARANCE_CHANNEL = "rivethub-memory:appearance";
+export const MEMORY_APPEARANCE_CHANGED_CHANNEL = "rivethub-memory:appearance-changed";

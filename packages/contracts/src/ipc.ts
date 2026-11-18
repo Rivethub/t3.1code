@@ -1,3 +1,4 @@
+import type { MemoryNodeAction, MemoryNodeState } from "./memory.ts";
 import * as Schema from "effect/Schema";
 import type { PreviewCaptureFailureEncoded } from "./previewCapture.ts";
 
@@ -1057,6 +1058,11 @@ export const SystemSettingsPaneSchema = Schema.Literals(["full-disk-access"]);
 export type SystemSettingsPane = typeof SystemSettingsPaneSchema.Type;
 
 export interface DesktopBridge {
+  memory?: {
+    node: (action: MemoryNodeAction) => Promise<MemoryNodeState>;
+    link: (url: string) => Promise<string | null>;
+    relogin: (origin: string) => Promise<string | null>;
+  };
   getAppBranding: () => DesktopAppBranding | null;
   getRelayTelemetryEnabled: () => boolean;
   getPathForFile: (file: File) => string;

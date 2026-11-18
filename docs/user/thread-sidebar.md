@@ -339,3 +339,13 @@ A snoozed thread keeps working and stays hidden until its wake time, even while
 its agent wakes itself for background work. It comes back early for an approval,
 a new question, a failed run, or a message or answer you send. You can snooze an existing
 question and answer when the thread wakes; the question stays unanswered.
+
+## Continue from Memory
+
+On Linux and macOS, open **Memory** in the T3.1 Code desktop sidebar to browse your
+local RivetHub node. If RivetHub is missing, Memory shows the official install command
+before you run it. **Settings → Memory** opens the node’s own settings.
+
+Links to your node in a conversation or expanded tool output open in Memory.
+Use **Open in T3.1 Code** on a captured session to reopen a thread or start a draft
+with a handoff prompt. Review the draft before sending it.

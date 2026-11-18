@@ -1,3 +1,4 @@
+import { linkifyToolOutput, ToolOutputLinks } from "../../memory/memoryLinks";
 import type { CommandOutputView } from "@t3tools/client-runtime/state/command-output";
 import type { EnvironmentId, ThreadId, TurnItemId } from "@t3tools/contracts";
 import { TERMINAL_PALETTES, terminalOutputSpans } from "@t3tools/shared/terminalOutput";
@@ -66,17 +67,18 @@ export function CommandOutputPanel(props: {
       className="max-h-80 overflow-auto text-muted-foreground"
     >
       {data?.output.truncated ? <div className="italic">Earlier output not shown</div> : null}
-      {spans.map((span, index) =>
-        span.style === null ? (
-          span.text
-        ) : (
+      {spans.map((span, index) => {
+        const links = linkifyToolOutput(span.text);
+        const content = links ? <ToolOutputLinks pieces={links} /> : span.text;
+        if (span.style === null && links === null) return content;
+        return (
           // Spans never reorder and are rebuilt on each update.
           // oxlint-disable-next-line react/no-array-index-key
-          <span key={index} style={span.style}>
-            {span.text}
+          <span key={index} style={span.style ?? undefined}>
+            {content}
           </span>
-        ),
-      )}
+        );
+      })}
     </div>
   );
 }
