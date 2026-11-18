@@ -16,9 +16,8 @@ import {
 import { MEMORY_APPEARANCE_CHANNEL, MEMORY_APPEARANCE_CHANGED_CHANNEL } from "../ipc/channels.ts";
 import { createMemoryNode } from "./Node.ts";
 
-const execute = NodeUtil.promisify(NodeChildProcess.execFile);
-
 export function makeDesktopMemory(platform: string, home: string, env: NodeJS.ProcessEnv) {
+  const execute = NodeUtil.promisify(NodeChildProcess.execFile);
   const paths = [
     ...(env.PATH ?? "").split(NodePath.delimiter),
     NodePath.join(home, ".local", "bin"),
