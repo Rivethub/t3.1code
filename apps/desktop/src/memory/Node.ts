@@ -29,6 +29,16 @@ export function createMemoryNode(ops: NodeOperations) {
   let state: MemoryNodeState = ops.supported ? { _tag: "checking" } : { _tag: "unsupported" };
   let pending: Promise<void> | undefined;
   let origin: string | null = null;
+  let linkOriginLookup: Promise<string | null> | undefined;
+
+  async function lookupLinkOrigin(): Promise<string | null> {
+    try {
+      const rh = await ops.find();
+      return rh ? (parseLoginUrl(await ops.login(rh))?.url.origin ?? null) : null;
+    } catch {
+      return null;
+    }
+  }
 
   async function detect(): Promise<MemoryNodeState> {
     const rh = await ops.find();
@@ -97,8 +107,12 @@ export function createMemoryNode(ops: NodeOperations) {
     origin: () => origin,
     async link(raw: string) {
       if (!ops.supported || !loopbackHttpUrl(raw)) return null;
-      if (!origin) await act("open");
-      return origin ? memoryLinkPath(origin, raw) : null;
+      if (origin) return memoryLinkPath(origin, raw);
+      const lookup = (linkOriginLookup ??= lookupLinkOrigin());
+      const discovered = await lookup;
+      if (!discovered && linkOriginLookup === lookup) linkOriginLookup = undefined;
+      const current = origin ?? discovered;
+      return current ? memoryLinkPath(current, raw) : null;
     },
     async relogin(expectedOrigin: string) {
       if (!origin || origin !== expectedOrigin) return null;

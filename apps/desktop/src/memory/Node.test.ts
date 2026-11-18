@@ -69,6 +69,17 @@ describe("Memory node", () => {
     expect(await node.act("open")).toEqual({ _tag: "ready", origin, signedInUrl });
   });
 
+  it("looks up the node origin for cold links without checking health or configuring the guest", async () => {
+    const ops = operations();
+    const node = createMemoryNode(ops);
+    expect(await node.link("http://localhost:3000/")).toBeNull();
+    expect(await node.link(origin + "/topics/one")).toBe("/topics/one");
+    expect(ops.login).toHaveBeenCalledTimes(1);
+    expect(ops.status).not.toHaveBeenCalled();
+    expect(ops.probe).not.toHaveBeenCalled();
+    expect(node.origin()).toBeNull();
+  });
+
   it("reports failed login and does not hand a guest a code from a different origin", async () => {
     const ops = operations();
     ops.login.mockResolvedValueOnce("https://example.com/login#code=foreign");
